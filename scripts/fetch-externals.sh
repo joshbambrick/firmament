@@ -22,6 +22,7 @@ PROTOBUF_VER="2.4.1"
 BOOST_VER="1.55"
 CS2_VER="4.6"
 PION_VER="5.0.5"
+LXC_VER="lxc-1.0.8"
 
 OS_ID=$(lsb_release -i -s)
 OS_RELEASE=$(lsb_release -r -s)
@@ -285,6 +286,32 @@ else
   echo "currently supported for automatic configuration."
   ask_continue
 fi
+
+
+## LXC library (for containing user tasks)
+print_subhdr "LXC LINUX CONTAINERS"
+LXC_BUILD_DIR=${EXT_DIR}/lxc-build
+LXC_INSTALL_FILE="${LXC_BUILD_DIR}/lib/pkgconfig/lxc.pc"
+if [[ ! -f ${LXC_INSTALL_FILE} ]]; then
+  LXC_DIR=lxc-git
+  mkdir -p ${LXC_BUILD_DIR}
+  get_dep_git "lxc" "https://github.com/lxc/lxc"
+  cd ${LXC_DIR}/
+  git checkout -q ${LXC_VER}
+  echo -n "Generating build infrastructure..."
+  RES1=$(./autogen.sh)
+  print_succ_or_fail ${RES1}
+  echo -n "Configuring lxc library..."
+  RES2=$(./configure --prefix=${LXC_BUILD_DIR})
+  print_succ_or_fail ${RES2}
+  echo -n "Building lxc library..."
+  RES3=$(make)
+  print_succ_or_fail ${RES3}
+  echo -n "Installing lxc library..."
+  RES4=$(make install)
+  print_succ_or_fail ${RES4}
+fi
+cd ${EXT_DIR}
 
 # Google Gflags command line flag library
 print_subhdr "GOOGLE GFLAGS LIBRARY"

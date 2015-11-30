@@ -16,8 +16,10 @@ extern "C" {
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <lxc/lxccontainer.h>
 }
 #include <boost/regex.hpp>
+#include <boost/filesystem.hpp>
 
 #include "base/common.h"
 #include "base/types.h"
@@ -351,9 +353,7 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
     envv.push_back((char*)(env_strings[i].c_str()));  // NOLINT
     ++i;
   }
-  // The last item in the argv and envp for execvpe is always NULL.
-  argv.push_back(NULL);
-  envv.push_back(NULL);
+  
   // Print the whole command line
   string full_cmd_line;
   for (vector<char*>::const_iterator arg_iter = argv.begin();
@@ -408,11 +408,28 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
       prctl(PR_SET_PDEATHSIG, SIGHUP);
 #endif
 
-      // Run the task binary
-      execvpe(argv[0], &argv[0], &envv[0]);
-      // execl only returns if there was an error
-      PLOG(ERROR) << "execvp failed for task command '" << full_cmd_line << "'";
-      //ReportTaskExecutionFailure();
+      char *container_name = "taskcontainer";
+
+      struct lxc_container *c;
+
+      c = lxc_container_new(container_name, NULL);
+      c->createl(c, "ubuntu", NULL, NULL, LXC_CREATE_QUIET, "-r", "trusty");
+
+
+      for (vector<string>::const_iterator it = features.begin(); it != features.end(); ++it) {
+          c->set_config_item(c, "lxc.environment", *it);
+      }
+
+      c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes", "512M");
+      c->set_config_item(c, "lxc.cgroup.memory.memsw.limit_in_bytes", "1G");
+
+      c->start(c, 0, NULL);
+
+      char *container_task_file_path = "/task";
+      copy_file(argv[0], "$HOME/.local/share/lxc/" + container_name + container_task_file_path);
+
+      c->attach_run_wait(c, NULL, container_task_file_path, &argv[0]);
+
       _exit(1);
     }
     default:
