@@ -9,7 +9,7 @@ OBJS = resource_status.o data_object.o
 # Do not reorder alphabetically.
 PBS = coco_interference_scores.pb.o whare_map_stats.pb.o \
       reference_desc.pb.o resource_vector.pb.o \
-      task_desc.pb.o resource_desc.pb.o resource_topology_node_desc.pb.o \
+      task_desc.pb.o resource_desc.pb.o resource_reservations.pb.o resource_topology_node_desc.pb.o \
       task_perf_statistics_sample.pb.o \
       task_final_report.pb.o machine_perf_statistics_sample.pb.o \
       data_object_name.pb.o job_desc.pb.o \

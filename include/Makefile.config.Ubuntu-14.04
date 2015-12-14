@@ -118,21 +118,7 @@ export PION_LIB
 #######################################
 
 # Header directory for lxc
-LXC_INC_DIR ?= $(EXT_DIR)/LXC-build/include/
-export LXC_INC_DIR
-
-# Path to the compiled lxc library (usually under
-# "make" in the lxc-git directory in "ext").
-LXC_LIB ?= $(EXT_DIR)/lxc-build/lib/liblxc.so
-export LXC_LIB
-
-
-#######################################
-# lxc-SPECIFIC DEFINITIONS
-#######################################
-
-# Header directory for lxc
-LXC_INC_DIR ?= $(EXT_DIR)/LXC-build/include/
+LXC_INC_DIR ?= $(EXT_DIR)/lxc-build/include/
 export LXC_INC_DIR
 
 # Path to the compiled lxc library (usually under
@@ -171,7 +157,7 @@ INCLUDES = -I$(SRC_ROOT_DIR) -I$(SRC_GEN_DIR) -I$(CSRC_GEN_DIR) \
 
 # XXX(malte): Factor these out into the individual Makefiles to avoid linking
 # every binary to the whole world.
-#LIBS = -lgflags -lglog -ltcmalloc -lprofiler -lpthread -lprotobuf -lboost_system -lboost_thread -lboost_regex -lboost_date_time -lpion-common -lpion-net -llog4cpp -lhwloc -llxc
+#LIBS = -lgflags -lglog -ltcmalloc -lprofiler -lpthread -lprotobuf -lboost_system -lboost_thread -lboost_regex -lboost_date_time -lboost_filesystem -lpion-common -lpion-net -llog4cpp -lhwloc -llxc
 #LIBS += $(GPERFTOOLS_LIB) -lgflags -lglog -lpthread -lprotobuf
 LIBS += -lgflags -lglog -lprotobuf -lrt -lpthread -l:libtcmalloc.so.4
 #LIBS += -lgflags -lglog -lpthread -lprotobuf

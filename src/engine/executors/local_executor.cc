@@ -18,8 +18,8 @@ extern "C" {
 #include <unistd.h>
 #include <lxc/lxccontainer.h>
 }
+#include <fstream>
 #include <boost/regex.hpp>
-#include <boost/filesystem.hpp>
 
 #include "base/common.h"
 #include "base/types.h"
@@ -408,27 +408,39 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
       prctl(PR_SET_PDEATHSIG, SIGHUP);
 #endif
 
-      char *container_name = "taskcontainer";
+      // will this clash if other threads are created? maybe need a map from thread to container
+      string container_name = "taskcontainer";
 
-      struct lxc_container *c;
+      lxc_container *c;
 
-      c = lxc_container_new(container_name, NULL);
+      c = lxc_container_new(container_name.c_str(), NULL);
       c->createl(c, "ubuntu", NULL, NULL, LXC_CREATE_QUIET, "-r", "trusty");
 
 
-      for (vector<string>::const_iterator it = features.begin(); it != features.end(); ++it) {
-          c->set_config_item(c, "lxc.environment", *it);
+      for (vector<string>::const_iterator it = env_strings.begin(); it != env_strings.end(); ++it) {
+          c->set_config_item(c, "lxc.environment", it->c_str());
       }
 
-      c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes", "512M");
-      c->set_config_item(c, "lxc.cgroup.memory.memsw.limit_in_bytes", "1G");
+      ResourceVector rs = td->resource_reservations();
+
+      c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes", rs->ram_cap());
+      c->set_config_item(c, "lxc.cgroup.memory.memsw.limit_in_bytes", rs->ram_cap());
+
+      boost::unique_lock<boost::shared_mutex> handler_lock(container_map_mutex_);
+      CHECK(InsertIfNotPresent(&task_containers_, task_id, c));
 
       c->start(c, 0, NULL);
 
-      char *container_task_file_path = "/task";
-      copy_file(argv[0], "$HOME/.local/share/lxc/" + container_name + container_task_file_path);
+      string container_task_file_subpath = "/task";
+      string container_task_file_path = "$HOME/.local/share/lxc/" + container_name + container_task_file_subpath;
 
-      c->attach_run_wait(c, NULL, container_task_file_path, &argv[0]);
+      std::ifstream  src(argv[0], std::ios::binary);
+      std::ofstream  dst(container_task_file_path.c_str(),   std::ios::binary);
+      dst << src.rdbuf();
+
+      c->attach_run_wait(c, NULL, container_task_file_subpath.c_str(), &argv[0]);
+
+      cout << "test";
 
       _exit(1);
     }
@@ -584,6 +596,17 @@ void LocalExecutor::ReadFromPipe(int fd) {
   }
   fflush(stdout);
   CHECK_EQ(fclose(stream), 0);
+}
+
+int LocalExecutor::GetTaskRam(TaskID_t task_id) {
+  boost::unique_lock<boost::shared_mutex> container_lock(container_map_mutex_);
+  lxc_container *c = FindOrNull(task_containers_, task_id);
+  CHECK_NOTNULL(c);
+
+  // Implement use of cadvisor with c
+  int mem = 1;
+
+  return mem;
 }
 
 }  // namespace executor

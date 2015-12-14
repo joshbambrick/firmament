@@ -23,6 +23,10 @@
 #error Boost not available!
 #endif
 
+extern "C" {
+  #include <lxc/lxccontainer.h>
+}
+
 #include "base/common.h"
 #include "base/types.h"
 #include "base/task_final_report.pb.h"
@@ -95,6 +99,7 @@ class LocalExecutor : public ExecutorInterface {
   char* TokenizeIntoArgv(const string& str, vector<char*>* argv);
   bool WaitForPerfFile(const string& file_name);
   void WriteToPipe(int fd, void* data, size_t len);
+  int GetTaskRam(TaskID_t task_id);
   // This holds the currently configured URI of the coordinator for this
   // resource (which must be unique, for now).
   const string coordinator_uri_;
@@ -114,6 +119,9 @@ class LocalExecutor : public ExecutorInterface {
   // Map to each task's local handler thread
   unordered_map<TaskID_t, boost::thread*> task_handler_threads_;
   unordered_map<TaskID_t, pid_t> task_pids_;
+  // Map to each task's containers
+  boost::shared_mutex container_map_mutex_;
+  unordered_map<TaskID_t, lxc_container*> task_containers_;
 };
 
 }  // namespace executor

@@ -114,6 +114,20 @@ export PION_LIB
 
 
 #######################################
+# lxc-SPECIFIC DEFINITIONS
+#######################################
+
+# Header directory for lxc
+LXC_INC_DIR ?= $(EXT_DIR)/lxc-build/include/
+export LXC_INC_DIR
+
+# Path to the compiled lxc library (usually under
+# "make" in the lxc-git directory in "ext").
+LXC_LIB ?= $(EXT_DIR)/lxc-build/lib/liblxc.so
+export LXC_LIB
+
+
+#######################################
 # SpookyV2-SPECIFIC DEFINITIONS
 #######################################
 

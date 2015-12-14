@@ -4,9 +4,9 @@ SUFFIX=engine
 include $(ROOT_DIR)/include/Makefile.config
 
 TASK_LIB_LIBS := $(LIBS) -lboost_thread -lboost_system -lboost_regex \
-                 -lboost_date_time -lhwloc -lssl -lcrypto
+                 -lboost_date_time -lhwloc -lssl -lcrypto -lboost_filesystem
 LIBS += -lboost_thread -lboost_system -lboost_regex -lboost_date_time \
-        -lboost_timer -lhwloc -lssl -lcrypto -lctemplate $(SPOOKY_OBJ)
+        -llxc -lboost_timer -lboost_filesystem -lhwloc -lssl -lcrypto -lctemplate $(SPOOKY_OBJ)
 ifneq ($(BOOST_VERSION), "1.48")
  LIBS += -lboost_chrono
 endif
@@ -107,8 +107,9 @@ $(OBJ_DIR)/coordinator: $(addprefix $(OBJ_DIR)/, $(COORD_OBJS)) \
 	$(BUILD_DIR)/sim/dfs/libfirmament_sim_dfs.a \
 	$(BUILD_DIR)/engine/executors/libfirmament_engine_executors.a \
 	$(BUILD_DIR)/storage/libfirmament_storage.a \
-	$(BUILD_DIR)/platforms/unix/libfirmament_unix.a
-	$(call quiet-command, \
+	$(BUILD_DIR)/platforms/unix/libfirmament_unix.a \
+	$(SRC_ROOT_DIR)/engine/coordinator_main.cc
+	&& $(call quiet-command, \
 		$(CXX) $(CPPFLAGS) \
 		$(SRC_ROOT_DIR)/engine/coordinator_main.cc \
 		$(OPTFLAGS) -fsanitize=address $(DEFINES) \

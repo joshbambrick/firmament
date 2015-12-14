@@ -118,7 +118,7 @@ export PION_LIB
 #######################################
 
 # Header directory for lxc
-LXC_INC_DIR ?= $(EXT_DIR)/LXC-build/include/
+LXC_INC_DIR ?= $(EXT_DIR)/lxc-build/include/
 export LXC_INC_DIR
 
 # Path to the compiled lxc library (usually under

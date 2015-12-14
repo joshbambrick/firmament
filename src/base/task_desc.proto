@@ -2,6 +2,7 @@ package firmament;
 
 import "base/reference_desc.proto";
 import "base/resource_vector.proto";
+import "base/resource_reservations.proto";
 import "base/task_final_report.proto";
 
 message TaskDescriptor {
@@ -64,4 +65,6 @@ message TaskDescriptor {
   optional TaskType task_type = 26;
   /* Final report after successful execution */
   optional TaskFinalReport final_report = 27;
+  /* Reservations for the resources that the task may use */
+  optional ResourceVector resource_reservations = 28;
 }

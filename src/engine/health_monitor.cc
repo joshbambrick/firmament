@@ -29,6 +29,8 @@ void HealthMonitor::Run(SchedulerInterface* scheduler,
     usleep(FLAGS_health_monitor_check_frequency);
     VLOG(1) << "Health monitor checking on things...";
     scheduler->CheckRunningTasksHealth();
+    scheduler->UpdateTaskResourceUsageKnowledge();
+    scheduler->UpdateTaskResourceReservations();
   }
 }
 

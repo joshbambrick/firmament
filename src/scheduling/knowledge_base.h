@@ -33,6 +33,10 @@ class KnowledgeBase {
   virtual ~KnowledgeBase();
   void AddMachineSample(const MachinePerfStatisticsSample& sample);
   void AddTaskSample(const TaskPerfStatisticsSample& sample);
+
+  void KnowledgeBase::UpdateTaskRamUsage(TaskID_t task_id, int ram);
+  int KnowledgeBase::GetLatestTaskRamUsage(TaskID_t task_id);
+
   void DumpMachineStats(const ResourceID_t& res_id) const;
   bool GetLatestStatsForMachine(ResourceID_t id,
                                 MachinePerfStatisticsSample* sample);

@@ -110,6 +110,14 @@ void KnowledgeBase::AddTaskSample(const TaskPerfStatisticsSample& sample) {
   }
 }
 
+void KnowledgeBase::UpdateTaskRamUsage(TaskID_t task_id, int ram) {
+  // to implement
+}
+
+int KnowledgeBase::GetLatestTaskRamUsage(TaskID_t task_id) {
+  // to implement
+}
+
 void KnowledgeBase::DumpMachineStats(const ResourceID_t& res_id) const {
   // Sanity checks
   const deque<MachinePerfStatisticsSample>* q =

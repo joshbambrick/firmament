@@ -4,7 +4,7 @@ SUFFIX=engine/executors
 include $(ROOT_DIR)/include/Makefile.config
 
 LIBS += -lboost_date_time -lboost_regex -lboost_system -lboost_thread \
-        -lcrypto -lhwloc -lssl
+        -lcrypto -lhwloc -lssl -lboost_filesystem -llxc
 ifneq ($(BOOST_VERSION), "1.48")
  LIBS += -lboost_chrono
 endif

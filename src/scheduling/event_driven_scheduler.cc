@@ -162,6 +162,8 @@ void EventDrivenScheduler::DeregisterResource(ResourceID_t res_id) {
 void EventDrivenScheduler::ExecuteTask(TaskDescriptor* td_ptr,
                                        ResourceDescriptor* rd_ptr) {
   TaskID_t task_id = td_ptr->uid();
+  // Initialize resource reservations
+  td_ptr->mutable_resource_reservations()->CopyFrom(td_ptr.resource_request());
   ResourceID_t res_id = ResourceIDFromString(rd_ptr->uuid());
   // Remove the task from the runnable set
   CHECK_EQ(runnable_tasks_.erase(task_id), 1)
@@ -687,6 +689,51 @@ bool EventDrivenScheduler::UnbindTaskFromResource(TaskDescriptor* td_ptr,
     return task_bindings_.erase(task_id) == 1;
   } else {
     return false;
+  }
+}
+
+void EventDrivenScheduler::UpdateTaskResourceUsageKnowledge() {
+  for (ResourceMap_t::const_iterator itm = *resource_map_.begin();
+       itm != *resource_map_.end();
+       ++itm) {
+    vector<TaskID_t> tasks = EventDrivenScheduler::BoundTasksForResource(itm->first);
+
+  ExecutorInterface* exec = FindPtrOrNull(executors_, res_id_tmp);
+  CHECK_NOTNULL(exec);
+    for (vector<TaskID_t>::iterator itv = *tasks.begin();
+         itv != *tasks.end();
+         ++itv) {
+      TaskID_t task_id = *itv;
+      int ram = exec->GetTaskRam(task_id);
+      knowledge_base->UpdateTaskRamUsage(task_id, ram);
+    }   
+  }
+}
+
+void EventDrivenScheduler::UpdateTaskResourceReservations() {
+ float safety_margin = 0.1;
+ float increment = 0.99;
+ float overshoot_boost = 1.5;
+
+ for (ResourceMap_t::const_iterator itm = *resource_map_.begin();
+       itm != *resource_map_.end();
+       ++itm) {
+    vector<TaskID_t> tasks = EventDrivenScheduler::BoundTasksForResource(itm->first);
+
+    for (vector<TaskID_t>::iterator itv = *tasks.begin();
+         itv != *tasks.end();
+         ++itv) {
+      TaskID_t task_id = *itv;
+      int usage_ram = knowledge_base->GetLatestTaskRamUsage(task_id);
+      TaskDescriptor* td_ptr = FindPtrOrNull(*task_map_, task_id);
+      int reservation_ram = td_ptr->resource_reservations()->ram_cap();
+      if (usage_ram > reservation_ram) {
+        td_ptr->resource_reservations()->set_ram_cap(reservation_ram * overshoot_boost);
+      } else {
+        int safe_new_reservation = max(safety_margin * usage_ram, reservation_ram * increment);
+        td_ptr->resource_reservations()->set_ram_cap(safe_new_reservation);
+      }
+    }
   }
 }
 
