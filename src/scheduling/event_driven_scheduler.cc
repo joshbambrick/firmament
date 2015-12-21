@@ -27,6 +27,15 @@
 DEFINE_int64(task_fail_timeout, 60, "Time (in seconds) after which to declare "
              "a task as failed if it has not sent heartbeats");
 
+ DEFINE_float(reservation_safety_margin, 0.1,
+              "Safety margin value for updating task reservations..");
+
+ DEFINE_float(reservation_increment, 0.9,
+              "Increment value for updating task reservations."); 
+
+ DEFINE_float(reservation_overshoot_boost, 1.5,
+              "Overshoot boost value for updating task reservations."); 
+
 namespace firmament {
 namespace scheduler {
 
@@ -693,10 +702,6 @@ bool EventDrivenScheduler::UnbindTaskFromResource(TaskDescriptor* td_ptr,
 }
 
 void EventDrivenScheduler::UpdateTaskResourceReservations() {
- float safety_margin = 0.1;
- float increment = 0.99;
- float overshoot_boost = 1.5;
-
  for (ResourceMap_t::const_iterator itm = *resource_map_.begin();
        itm != *resource_map_.end();
        ++itm) {
@@ -715,11 +720,11 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
       if (reservations != NULL) {
         int reservation_ram = reservations->ram_cap();
         if (usage_ram > reservation_ram) {
-          int cap = (int) (reservation_ram * overshoot_boost);
+          int cap = (int) (reservation_ram * FLAGS_reservation_overshoot_boost);
           td_ptr->resource_reservations()->set_ram_cap(cap);
         } else {
-          int expected = (int) (reservation_ram * increment);
-          int safety = (int) floor(safety_margin * usage_ram);
+          int expected = (int) (reservation_ram * FLAGS_reservation_increment);
+          int safety = (int) floor(FLAGS_reservation_safety_margin * usage_ram);
           int safe_new_reservation = max(expected, safety);
           td_ptr->resource_reservations()->set_ram_cap(safe_new_reservation);
         }
