@@ -68,6 +68,7 @@ class TaskLib {
   bool exit_;
   // TODO(malte): transform this into a better representation
   string coordinator_uri_;
+  int container_monitor_port_;
   ResourceID_t resource_id_;
   TaskID_t task_id_;
   TaskDescriptor task_descriptor_;
@@ -102,6 +103,7 @@ class TaskLib {
   volatile double completed_;
   ProcFSMonitor task_perf_monitor_;
   unique_ptr<FILE> completion_file_;
+  TaskContainerMonitor task_container_monitor_;
 };
 
 }  // namespace firmament

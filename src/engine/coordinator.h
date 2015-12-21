@@ -221,6 +221,7 @@ class Coordinator : public Node,
                        TaskKillMessage::TaskKillReason reason);
 
  protected:
+  void CreateContainerMonitor();
   void AddJobsTasksToTables(TaskDescriptor* td, JobID_t job_id);
   void AddResource(ResourceTopologyNodeDescriptor* rtnd,
                    const string& endpoint_uri,

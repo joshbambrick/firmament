@@ -99,7 +99,7 @@ class LocalExecutor : public ExecutorInterface {
   char* TokenizeIntoArgv(const string& str, vector<char*>* argv);
   bool WaitForPerfFile(const string& file_name);
   void WriteToPipe(int fd, void* data, size_t len);
-  int GetTaskRam(TaskID_t task_id);
+  string GetTaskContainerName(TaskID_t task_id);
   // This holds the currently configured URI of the coordinator for this
   // resource (which must be unique, for now).
   const string coordinator_uri_;

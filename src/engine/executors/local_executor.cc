@@ -26,8 +26,13 @@ extern "C" {
 #include "base/units.h"
 #include "engine/executors/task_health_checker.h"
 #include "misc/utils.h"
+#include "misc/uri_tools.h"
 #include "misc/map-util.h"
 
+DEFINE_string(container_monitor_uri, "",
+            "The URI of the container monitor.");
+DEFINE_int32(container_monitor_port, 8010,
+             "The port of the container monitor");
 DEFINE_bool(pin_tasks_to_cores, true,
             "Pin tasks to their allocated CPU core when executing.");
 DEFINE_bool(debug_tasks, false,
@@ -311,7 +316,6 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
     PLOG(ERROR) << "Failed to create pipe from task.";
   }*/
   vector<char*> argv;
-  vector<char*> envv;
   // Get paths for task logs
   string tasklog_stdout = tasklog + "-stdout";
   string tasklog_stderr = tasklog + "-stderr";
@@ -342,15 +346,14 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
     VLOG(1) << "Adding extra argument \"" << args[i] << "\"";
     argv.push_back((char*)(args[i].c_str()));  // NOLINT
   }
+  // The last item in the argv for lxc is always NULL.
+  argv.push_back(NULL);
   vector<string> env_strings(env.size());
   uint64_t i = 0;
   for (unordered_map<string, string>::const_iterator it = env.begin();
        it != env.end();
        ++it) {
     env_strings[i] = it->first + "=" + it->second;
-    // N.B.: This casts away the const qualifier on the c_str() result.
-    // Unsafe, but okay since env_str lives beyond the execvpe call.
-    envv.push_back((char*)(env_strings[i].c_str()));  // NOLINT
     ++i;
   }
   
@@ -409,7 +412,7 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
 #endif
 
       // will this clash if other threads are created? maybe need a map from thread to container
-      string container_name = "taskcontainer";
+      string container_name = GetTaskContainerName(task_id);
 
       lxc_container *c;
 
@@ -432,7 +435,8 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
       c->start(c, 0, NULL);
 
       string container_task_file_subpath = "/task";
-      string container_task_file_path = "$HOME/.local/share/lxc/" + container_name + container_task_file_subpath;
+      string container_task_file_path = "$HOME/.local/share/lxc/" + container_name +
+                                        container_task_file_subpath;
 
       std::ifstream  src(argv[0], std::ios::binary);
       std::ofstream  dst(container_task_file_path.c_str(),   std::ios::binary);
@@ -501,8 +505,15 @@ void LocalExecutor::SetUpEnvironmentForTask(
   InsertIfNotPresent(env, "PATH",
       "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
   InsertIfNotPresent(env, "FLAGS_task_id", to_string(td.uid()));
+  InsertIfNotPresent(env, "FLAGS_task_container_name", GetTaskContainerName(td.uid()));
   InsertIfNotPresent(env, "PERF_FNAME", PerfDataFileName(td));
   InsertIfNotPresent(env, "FLAGS_coordinator_uri", coordinator_uri_);
+  // TODO(josh): Check this logic.
+  string container_monitor_uri = FLAGS_container_monitor_uri.empty()
+      ? (URITools::GetHostnameFromURI(coordinator_uri_)
+            + ":" + FLAGS_container_monitor_port)
+      : FLAGS_container_monitor_uri;
+  InsertIfNotPresent(env, "FLAGS_container_monitor_uri", container_monitor_uri);
   InsertIfNotPresent(env, "FLAGS_resource_id", to_string(local_resource_id_));
   InsertIfNotPresent(env, "FLAGS_heartbeat_interval",
                      to_string(heartbeat_interval_));
@@ -598,15 +609,8 @@ void LocalExecutor::ReadFromPipe(int fd) {
   CHECK_EQ(fclose(stream), 0);
 }
 
-int LocalExecutor::GetTaskRam(TaskID_t task_id) {
-  boost::unique_lock<boost::shared_mutex> container_lock(container_map_mutex_);
-  lxc_container *c = FindOrNull(task_containers_, task_id);
-  CHECK_NOTNULL(c);
-
-  // Implement use of cadvisor with c
-  int mem = 1;
-
-  return mem;
+string LocalExecutor::GetTaskContainerName(TaskID_t task_id) {
+  return "task" + to_string(td.uid());
 }
 
 }  // namespace executor

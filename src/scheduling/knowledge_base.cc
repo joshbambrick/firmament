@@ -110,14 +110,6 @@ void KnowledgeBase::AddTaskSample(const TaskPerfStatisticsSample& sample) {
   }
 }
 
-void KnowledgeBase::UpdateTaskRamUsage(TaskID_t task_id, int ram) {
-  // to implement
-}
-
-int KnowledgeBase::GetLatestTaskRamUsage(TaskID_t task_id) {
-  // to implement
-}
-
 void KnowledgeBase::DumpMachineStats(const ResourceID_t& res_id) const {
   // Sanity checks
   const deque<MachinePerfStatisticsSample>* q =
@@ -144,6 +136,13 @@ bool KnowledgeBase::GetLatestStatsForMachine(
   // We make a copy here, as we lose the lock when returning
   sample->CopyFrom(res->back());
   return true;
+}
+
+TaskPerfStatisticsSample* KnowledgeBase::GetLatestStatsForTask(
+      TaskID_t id) const {
+  const deque<TaskPerfStatisticsSample>* res = FindOrNull(task_map_, id);
+  CHECK_NOTNULL(res);
+  return &(res->back());
 }
 
 const deque<MachinePerfStatisticsSample> KnowledgeBase::GetStatsForMachine(

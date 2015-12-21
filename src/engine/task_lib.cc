@@ -22,14 +22,19 @@
 #include "messages/task_spawn_message.pb.h"
 #include "messages/task_state_message.pb.h"
 #include "misc/utils.h"
+#include "misc/container_monitor_utils.h"
 #include "platforms/common.h"
 #include "platforms/common.pb.h"
 
 
 DEFINE_string(coordinator_uri, "", "The URI to contact the coordinator at.");
+DEFINE_int32(container_monitor_uri, "",
+             "The URI of the container monitor");
 DEFINE_string(resource_id, "",
         "The resource ID that is running this task.");
 DEFINE_string(task_id, "", "The ID of this task.");
+DEFINE_string(task_container_name, "",
+             "The name of the container in which this task runs.");
 DEFINE_int32(heartbeat_interval, 1000000,
         "The interval, in microseconds, between heartbeats sent to the"
         "coordinator.");
@@ -56,6 +61,7 @@ TaskLib::TaskLib()
     chan_(new StreamSocketsChannel<BaseMessage>(
         StreamSocketsChannel<BaseMessage>::SS_TCP)),
     coordinator_uri_(getenv("FLAGS_coordinator_uri")),
+    container_monitor_uri_(getenv("FLAGS_container_monitor_uri")),
     resource_id_(ResourceIDFromString(getenv("FLAGS_resource_id"))),
     pid_(getpid()),
     task_running_(false),
@@ -125,6 +131,12 @@ void TaskLib::Stop(bool success) {
     unlink(pid_filename.c_str());
     //exit(0);
   }
+}
+
+void TaskLib::AddTaskResourcesToHeartbeat(TaskPerfStatisticsSample* stats) {
+  stats->mutable_resources()
+      ->CopyFrom(ContainerMonitorCreateResourceVector(
+          container_monitor_uri_, task_container_name_));
 }
 
 void TaskLib::AddTaskStatisticsToHeartbeat(

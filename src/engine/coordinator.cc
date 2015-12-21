@@ -27,6 +27,7 @@
 #include "misc/pb_utils.h"
 #include "misc/protobuf_envelope.h"
 #include "misc/map-util.h"
+#include "misc/container_monitor_utils.h"
 #include "misc/utils.h"
 #include "scheduling/flow/flow_scheduler.h"
 #include "scheduling/knowledge_base.h"
@@ -42,6 +43,8 @@ DEFINE_bool(include_local_resources, true, "Add local machine's resources; "
             "will instantiate a resource-less coordinator if false.");
 DEFINE_string(scheduler, "simple", "Scheduler to use: one of 'simple' or "
               "'flow'.");
+DEFINE_int32(container_monitor_port, 8010,
+             "The port of the coordinator's container monitor");
 #ifdef __HTTP_UI__
 DEFINE_bool(http_ui, true, "Enable HTTP interface");
 DEFINE_int32(http_ui_port, 8080,
@@ -209,6 +212,7 @@ void Coordinator::Run() {
   // Test topology detection
   LOG(INFO) << "Detecting resource topology:";
   topology_manager_->DebugPrintRawTopology();
+  CreateContainerMonitor();
   if (FLAGS_include_local_resources) {
     // Add the local processing resources
     DetectLocalResources();
@@ -988,6 +992,10 @@ const string Coordinator::SubmitJob(const JobDescriptor& job_descriptor) {
             << "scheduled " << num_scheduled << " tasks.";
   // Finally, return the new job's ID
   return to_string(new_job_id);
+}
+
+void Coordinator::CreateContainerMonitor() {
+  ContainerMonitorUtils::StartContainerMonitor();
 }
 
 void Coordinator::Shutdown(const string& reason) {
