@@ -109,7 +109,7 @@ $(OBJ_DIR)/coordinator: $(addprefix $(OBJ_DIR)/, $(COORD_OBJS)) \
 	$(BUILD_DIR)/storage/libfirmament_storage.a \
 	$(BUILD_DIR)/platforms/unix/libfirmament_unix.a \
 	$(SRC_ROOT_DIR)/engine/coordinator_main.cc
-	&& $(call quiet-command, \
+	$(call quiet-command, \
 		$(CXX) $(CPPFLAGS) \
 		$(SRC_ROOT_DIR)/engine/coordinator_main.cc \
 		$(OPTFLAGS) -fsanitize=address $(DEFINES) \

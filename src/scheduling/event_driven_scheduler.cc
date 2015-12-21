@@ -692,24 +692,6 @@ bool EventDrivenScheduler::UnbindTaskFromResource(TaskDescriptor* td_ptr,
   }
 }
 
-void EventDrivenScheduler::UpdateTaskResourceUsageKnowledge() {
-  for (ResourceMap_t::const_iterator itm = *resource_map_.begin();
-       itm != *resource_map_.end();
-       ++itm) {
-    vector<TaskID_t> tasks = EventDrivenScheduler::BoundTasksForResource(itm->first);
-
-  ExecutorInterface* exec = FindPtrOrNull(executors_, res_id_tmp);
-  CHECK_NOTNULL(exec);
-    for (vector<TaskID_t>::iterator itv = *tasks.begin();
-         itv != *tasks.end();
-         ++itv) {
-      TaskID_t task_id = *itv;
-      int ram = exec->GetTaskRam(task_id);
-      knowledge_base->UpdateTaskRamUsage(task_id, ram);
-    }   
-  }
-}
-
 void EventDrivenScheduler::UpdateTaskResourceReservations() {
  float safety_margin = 0.1;
  float increment = 0.99;
@@ -718,20 +700,29 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
  for (ResourceMap_t::const_iterator itm = *resource_map_.begin();
        itm != *resource_map_.end();
        ++itm) {
-    vector<TaskID_t> tasks = EventDrivenScheduler::BoundTasksForResource(itm->first);
+    vector<TaskID_t> tasks = BoundTasksForResource(itm->first);
 
     for (vector<TaskID_t>::iterator itv = *tasks.begin();
          itv != *tasks.end();
          ++itv) {
       TaskID_t task_id = *itv;
-      int usage_ram = knowledge_base->GetLatestTaskRamUsage(task_id);
+      TaskPerfStatisticsSample* stats =
+          knowledge_base->GetLatestStatsForTask(task_id);
+      int usage_ram = stats->resources()->ram_bw();
       TaskDescriptor* td_ptr = FindPtrOrNull(*task_map_, task_id);
-      int reservation_ram = td_ptr->resource_reservations()->ram_cap();
-      if (usage_ram > reservation_ram) {
-        td_ptr->resource_reservations()->set_ram_cap(reservation_ram * overshoot_boost);
-      } else {
-        int safe_new_reservation = max(safety_margin * usage_ram, reservation_ram * increment);
-        td_ptr->resource_reservations()->set_ram_cap(safe_new_reservation);
+      ResourceVector* reservations = td_ptr->resource_reservations();
+      // Knowledge Base may not be up to date or this may be a remote resource.
+      if (reservations != NULL) {
+        int reservation_ram = reservations->ram_cap();
+        if (usage_ram > reservation_ram) {
+          int cap = (int) (reservation_ram * overshoot_boost);
+          td_ptr->resource_reservations()->set_ram_cap(cap);
+        } else {
+          int expected = (int) (reservation_ram * increment);
+          int safety = (int) floor(safety_margin * usage_ram);
+          int safe_new_reservation = max(expected, safety);
+          td_ptr->resource_reservations()->set_ram_cap(safe_new_reservation);
+        }
       }
     }
   }
