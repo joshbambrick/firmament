@@ -733,5 +733,22 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
   }
 }
 
+ResourceID_t EventDrivenScheduler::MachineResIDForResource(
+    ResourceID_t res_id) {
+  ResourceStatus* rs = FindPtrOrNull(*resource_map_, res_id);
+  CHECK_NOTNULL(rs);
+  ResourceTopologyNodeDescriptor* rtnd = rs->mutable_topology_node();
+  while (rtnd->resource_desc().type() != ResourceDescriptor::RESOURCE_MACHINE) {
+    if (!rtnd->has_parent_id()) {
+      VLOG(2) << "Non-machine resource " << rtnd->resource_desc().uuid()
+              << " has no parent!";
+      return ResourceID_t();
+    }
+    rs = FindPtrOrNull(*resource_map_, ResourceIDFromString(rtnd->parent_id()));
+    rtnd = rs->mutable_topology_node();
+  }
+  return ResourceIDFromString(rtnd->resource_desc().uuid());
+}
+
 }  // namespace scheduler
 }  // namespace firmament

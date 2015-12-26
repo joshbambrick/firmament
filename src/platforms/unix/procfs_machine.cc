@@ -34,7 +34,8 @@ ProcFSMachine::ProcFSMachine() {
 }
 
 const MachinePerfStatisticsSample* ProcFSMachine::CreateStatistics(
-    MachinePerfStatisticsSample* stats) {
+    MachinePerfStatisticsSample* stats,
+    vector<TaskDescriptor*>* machine_running_task_descs) {
   // CPU stats
   vector<CpuUsage> cpus_usage = GetCPUUsage();
   vector<CpuUsage>::iterator it;
@@ -74,6 +75,16 @@ const MachinePerfStatisticsSample* ProcFSMachine::CreateStatistics(
       (static_cast<double>(FLAGS_heartbeat_interval) /
        static_cast<double>(SECONDS_TO_MICROSECONDS)));
   disk_stats_ = disk_stats;
+
+
+  ResourceVector* machine_res = stats->mutable_resource_reservations());
+  machine_res->set_ram_cap(0);
+  for (vector<TaskID_t>::iterator it = machine_running_task_descs->begin();
+        it != machine_running_task_descs->end(); it++) {
+    ResourceVector task_res = it->resource_reservations();
+    machine_res->set_ram_cap(task_res->ram_cap() + machine_res->ram_cap());
+  }
+
   return stats;
 }
 

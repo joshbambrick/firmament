@@ -5,6 +5,8 @@
 
 package firmament;
 
+import "base/resource_vector.proto";
+
 message MachinePerfStatisticsSample {
   required string resource_id = 1;
   required uint64 timestamp = 2;
@@ -14,6 +16,7 @@ message MachinePerfStatisticsSample {
   repeated CpuUsage cpus_usage = 5;
   optional uint64 disk_bw = 6 [default = 0];
   optional uint64 net_bw = 7 [default = 0];
+  optional ResourceVector resource_reservations = 8;
 }
 
 message CpuUsage {

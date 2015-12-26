@@ -72,6 +72,13 @@ class SchedulerInterface : public PrintableInterface {
   virtual vector<TaskID_t> BoundTasksForResource(ResourceID_t res_id) = 0;
 
   /**
+   * Returns the resource ID for the machine of a resource.
+   * @param res_id the ID of the resource whose machine resource ID to find
+   * @return the resource ID of the machine on which that resource runs
+   */
+  virtual ResourceID_t MachineResIDForResource(ResourceID_t res_id) = 0;
+
+  /**
    * Checks if all running tasks managed by this scheduler are healthy. It
    * invokes failure handlers if any failures are detected.
    */
