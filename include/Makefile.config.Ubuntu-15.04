@@ -128,6 +128,20 @@ export LXC_LIB
 
 
 #######################################
+# cpprest-SPECIFIC DEFINITIONS
+#######################################
+
+# Header directory for cpprest
+CPPREST_INC_DIR ?= $(EXT_DIR)/casablanca/Release/include/
+export CPPREST_INC_DIR
+
+# Path to the compiled cpprest library (usually under
+# "make" in the cpprest-git directory in "ext").
+CPPREST_LIB ?= $(EXT_DIR)/casablanca/Release/build.release/Binaries/libcpprest.so
+export CPPREST_LIB
+
+
+#######################################
 # SpookyV2-SPECIFIC DEFINITIONS
 #######################################
 
@@ -146,7 +160,7 @@ export SPOOKY_OBJ
 
 INCLUDES = -I$(SRC_ROOT_DIR) -I$(SRC_GEN_DIR) -I$(CSRC_GEN_DIR) \
            -I$(GTEST_INC_DIR) -I$(HDFS_INC_DIR) -I$(PB2JSON_INC_DIR) \
-           -I$(PION_INC_DIR) -I$(LXC_INC_DIR) -I$(SPOOKY_INC_DIR) -I$(TSSTLC_INC_DIR)
+           -I$(PION_INC_DIR) -I$(LXC_INC_DIR) -I$(CPPREST_INC_DIR) -I$(SPOOKY_INC_DIR) -I$(TSSTLC_INC_DIR)
            #-I/usr/lib/llvm-3.2/lib/clang/3.2/include/
            #-I$(GPERFTOOLS_INC_DIR)
 

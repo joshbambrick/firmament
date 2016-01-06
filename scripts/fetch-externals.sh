@@ -49,9 +49,9 @@ fi
 # Flowlessly deployment key
 FLOWLESSLY_DEPLOY_KEY=~/.ssh/flowlessly-deploy_rsa
 
-UBUNTU_x86_PKGS="${BASE_PKGS} ${CLANG_PKGS} ${COMPILER_PKGS} ${GOOGLE_PKGS} ${PERFTOOLS_PKGS} ${BOOST_PKGS} ${PION_PKGS} ${MISC_PKGS} ${HDFS_PKGS}"
-DEBIAN_x86_PKGS="${BASE_PKGS} ${CLANG_PKGS} ${COMPILER_PKGS} ${GOOGLE_PKGS} ${PERFTOOLS_PKGS} ${BOOST_PKGS} ${PION_PKGS} ${MISC_PKGS} ${HDFS_PKGS}"
-DEBIAN_ia64_PKGS="${BASE_PKGS} ${COMPILER_PKGS} ${GOOGLE_PKGS} ${BOOST_PKGS} ${PION_PKGS} ${MISC_PKGS} ${HDFS_PKGS}"
+UBUNTU_x86_PKGS="${BASE_PKGS} ${CLANG_PKGS} ${COMPILER_PKGS} ${GOOGLE_PKGS} ${PERFTOOLS_PKGS} ${BOOST_PKGS} ${PION_PKGS} ${MISC_PKGS} ${HDFS_PKGS} ${CPPREST_PKGS}"
+DEBIAN_x86_PKGS="${BASE_PKGS} ${CLANG_PKGS} ${COMPILER_PKGS} ${GOOGLE_PKGS} ${PERFTOOLS_PKGS} ${BOOST_PKGS} ${PION_PKGS} ${MISC_PKGS} ${HDFS_PKGS} ${CPPREST_PKGS}"
+DEBIAN_ia64_PKGS="${BASE_PKGS} ${COMPILER_PKGS} ${GOOGLE_PKGS} ${BOOST_PKGS} ${PION_PKGS} ${MISC_PKGS} ${HDFS_PKGS} ${CPPREST_PKGS}"
 
 # Super-user? Should I run sudo commands non-interactively?
 USER=$(whoami)
@@ -115,6 +115,7 @@ function check_dpkg_packages() {
       echo "Sorry, you're on your own now..."
     fi
   fi
+
   for i in ${OS_PKGS}; do
     PKG_RES=$(dpkg-query -W -f='${Status}\n' ${i} | grep -E "^install" 2>/dev/null)
     if [[ $PKG_RES == "" ]]; then
@@ -312,6 +313,26 @@ if [[ ! -f ${LXC_INSTALL_FILE} ]]; then
   print_succ_or_fail ${RES4}
 fi
 cd ${EXT_DIR}
+
+
+## CPP REST library (for REST APIs)
+print_subhdr "C++ REST SDK"
+CPPREST_DIR=casablanca-git
+CPPREST_BUILD_DIR=${EXT_DIR}/${CPPREST_DIR}/Release/build.release
+CPPREST_INSTALL_FILE="${CPPREST_BUILD_DIR}/lib/pkgconfig/CPPREST.pc"
+if [[ ! -f ${CPPREST_INSTALL_FILE} ]]; then
+  get_dep_git "casablanca" "https://git.codeplex.com/casablanca"
+  mkdir -p ${CPPREST_BUILD_DIR}
+  cd ${CPPREST_BUILD_DIR}/
+  echo -n "Compiling cpprest library..."
+  RES1=$(CXX=g++-4.8 cmake .. -DCMAKE_BUILD_TYPE=Release)
+  print_succ_or_fail ${RES1}
+  echo -n "Building cpprest library..."
+  RES2=$(make)
+  print_succ_or_fail ${RES2}
+fi
+cd ${EXT_DIR}
+
 
 # Google Gflags command line flag library
 print_subhdr "GOOGLE GFLAGS LIBRARY"
