@@ -3,13 +3,18 @@
 //
 // Container monitor utils.
 
-using std::string;
 #include "base/resource_vector.pb.h"
+#include "cpprest/http_client.h"
+#include "cpprest/json.h"
+using std::string;
+using namespace web;
+using namespace http;
+using namespace json;
 
 namespace firmament {
 
 void StartContainerMonitor();
-ResourceVector* ContainerMonitorCreateResourceVector(
+ResourceVector ContainerMonitorCreateResourceVector(
     string container_monitor_uri, string task_container_name);
 ResourceVector GetResourceUsageVector(http::uri node_uri);
 json::value GetResourceUsageJson(http::uri node_uri);

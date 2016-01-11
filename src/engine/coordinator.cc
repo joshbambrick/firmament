@@ -265,21 +265,20 @@ void Coordinator::Run() {
 
       // Create a vector of tasks running on this machine
       ResourceID_t machine_res_id = scheduler_->MachineResIDForResource(
-                                                        resource_desc_.uuid());
+                                  ResourceIDFromString(resource_desc_.uuid()));
       vector<TaskDescriptor*> machine_running_task_descs;
       for(thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
-              = task_table_.get().begin();
-          it != task_table_.get().end(); it++) {
+              = task_table_.get()->begin();
+          it != task_table_.get()->end(); it++) {
         TaskDescriptor* td_ptr = it->second;
         ResourceID_t task_machine_res_id = scheduler_->MachineResIDForResource(
                         ResourceIDFromString(td_ptr->scheduled_to_resource()));
         if (td_ptr->state() == TaskDescriptor::RUNNING
             && task_machine_res_id == machine_res_id)
-          machine_running_task_descs.add(td_ptr);
+          machine_running_task_descs.push_back(td_ptr);
       }
 
-      machine_monitor_.CreateStatistics(&stats, scheduler_->knowledge_base(),
-          &machine_running_task_descs);
+      machine_monitor_.CreateStatistics(&stats, &machine_running_task_descs);
       // Record this sample locally
       scheduler_->knowledge_base()->AddMachineSample(stats);
       if (parent_chan_ != NULL) {
@@ -1012,7 +1011,7 @@ const string Coordinator::SubmitJob(const JobDescriptor& job_descriptor) {
 }
 
 void Coordinator::CreateContainerMonitor() {
-  ContainerMonitorUtils::StartContainerMonitor();
+  StartContainerMonitor();
 }
 
 void Coordinator::Shutdown(const string& reason) {

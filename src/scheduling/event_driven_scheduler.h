@@ -45,6 +45,7 @@ class EventDrivenScheduler : public SchedulerInterface {
   virtual void AddJob(JobDescriptor* jd_ptr);
   ResourceID_t* BoundResourceForTask(TaskID_t task_id);
   vector<TaskID_t> BoundTasksForResource(ResourceID_t res_id);
+  ResourceID_t MachineResIDForResource(ResourceID_t res_id);
   void CheckRunningTasksHealth();
   virtual void DeregisterResource(ResourceID_t res_id);
   virtual void HandleJobCompletion(JobID_t job_id);
@@ -74,6 +75,7 @@ class EventDrivenScheduler : public SchedulerInterface {
   virtual ostream& ToString(ostream* stream) const {
     return *stream << "<EventDrivenScheduler>";
   }
+  virtual void UpdateTaskResourceReservations();
 
  protected:
   FRIEND_TEST(SimpleSchedulerTest, FindRunnableTasksForJob);

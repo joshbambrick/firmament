@@ -271,9 +271,10 @@ bool LocalExecutor::_RunTask(TaskDescriptor* td,
   // debugging flags, is this a Firmament task binary? (on/off; will cause
   // default arugments to be passed)
   bool res = (RunProcessSync(
-      td->uid(), td->binary(), args, env, FLAGS_perf_monitoring,
-      (FLAGS_debug_tasks || ((FLAGS_debug_interactively != 0) &&
-                             (td->uid() == FLAGS_debug_interactively))),
+      td->uid(), td->binary(), args, env, td->resource_reservations(),
+      FLAGS_perf_monitoring, (FLAGS_debug_tasks ||
+                              ((FLAGS_debug_interactively != 0) &&
+                                   (td->uid() == FLAGS_debug_interactively))),
       firmament_binary, tasklog) == 0);
   VLOG(1) << "Result of RunProcessSync was " << res;
   return res;
@@ -283,15 +284,18 @@ int32_t LocalExecutor::RunProcessAsync(TaskID_t task_id,
                                        const string& cmdline,
                                        vector<string> args,
                                        unordered_map<string, string> env,
+                                       ResourceVector resource_reservations,
                                        bool perf_monitoring,
                                        bool debug,
                                        bool default_args,
                                        const string& tasklog) {
   // TODO(malte): We lose the thread reference here, so we can never join this
   // thread. Need to return or store if we ever need it for anythign again.
-  boost::thread async_process_thread(
-      boost::bind(&LocalExecutor::RunProcessSync, this, task_id, cmdline, args,
-                  env, perf_monitoring, debug, default_args, tasklog));
+  // TODO(josh): Decide if this is needed. The extra arg causes boost issues.
+  // boost::thread async_process_thread(
+  //     boost::bind(&LocalExecutor::RunProcessSync, this, task_id, cmdline, args,
+  //                 env, resource_reservations, perf_monitoring, debug,
+  //                 default_args, tasklog));
   // We hard-code the return to zero here; maybe should return a thread
   // reference instead.
   return 0;
@@ -301,6 +305,7 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
                                       const string& cmdline,
                                       vector<string> args,
                                       unordered_map<string, string> env,
+                                      ResourceVector resource_reservations,
                                       bool perf_monitoring,
                                       bool debug,
                                       bool default_args,
@@ -420,14 +425,15 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
       c->createl(c, "ubuntu", NULL, NULL, LXC_CREATE_QUIET, "-r", "trusty");
 
 
-      for (vector<string>::const_iterator it = env_strings.begin(); it != env_strings.end(); ++it) {
+      for (vector<string>::const_iterator it = env_strings.begin();
+              it != env_strings.end(); ++it) {
           c->set_config_item(c, "lxc.environment", it->c_str());
       }
 
-      ResourceVector rs = td->resource_reservations();
 
-      c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes", rs->ram_cap());
-      c->set_config_item(c, "lxc.cgroup.memory.memsw.limit_in_bytes", rs->ram_cap());
+      const char* ram_cap = to_string(resource_reservations.ram_cap()).c_str();
+      c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes",ram_cap);
+      c->set_config_item(c, "lxc.cgroup.memory.memsw.limit_in_bytes",ram_cap);
 
       boost::unique_lock<boost::shared_mutex> handler_lock(container_map_mutex_);
       CHECK(InsertIfNotPresent(&task_containers_, task_id, c));
@@ -511,7 +517,7 @@ void LocalExecutor::SetUpEnvironmentForTask(
   // TODO(josh): Check this logic.
   string container_monitor_uri = FLAGS_container_monitor_uri.empty()
       ? (URITools::GetHostnameFromURI(coordinator_uri_)
-            + ":" + FLAGS_container_monitor_port)
+            + ":" + to_string(FLAGS_container_monitor_port))
       : FLAGS_container_monitor_uri;
   InsertIfNotPresent(env, "FLAGS_container_monitor_uri", container_monitor_uri);
   InsertIfNotPresent(env, "FLAGS_resource_id", to_string(local_resource_id_));
@@ -610,7 +616,7 @@ void LocalExecutor::ReadFromPipe(int fd) {
 }
 
 string LocalExecutor::GetTaskContainerName(TaskID_t task_id) {
-  return "task" + to_string(td.uid());
+  return "task" + to_string(task_id);
 }
 
 }  // namespace executor

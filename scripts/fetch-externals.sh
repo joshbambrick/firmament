@@ -317,17 +317,18 @@ cd ${EXT_DIR}
 
 ## CPP REST library (for REST APIs)
 print_subhdr "C++ REST SDK"
-CPPREST_DIR=casablanca-git
-CPPREST_BUILD_DIR=${EXT_DIR}/${CPPREST_DIR}/Release/build.release
+CPPREST_DIR=${EXT_DIR}/casablanca-git
+CPPREST_BINARY_DIR=${CPPREST_DIR}/Release/build.release
 CPPREST_INSTALL_FILE="${CPPREST_BUILD_DIR}/lib/pkgconfig/CPPREST.pc"
 if [[ ! -f ${CPPREST_INSTALL_FILE} ]]; then
   get_dep_git "casablanca" "https://git.codeplex.com/casablanca"
-  mkdir -p ${CPPREST_BUILD_DIR}
-  cd ${CPPREST_BUILD_DIR}/
+  mkdir -p ${CPPREST_BINARY_DIR}
+  cd ${CPPREST_BINARY_DIR}/
   echo -n "Compiling cpprest library..."
   RES1=$(CXX=g++-4.8 cmake .. -DCMAKE_BUILD_TYPE=Release)
   print_succ_or_fail ${RES1}
   echo -n "Building cpprest library..."
+  cd ${CPPREST_BINARY_DIR}/
   RES2=$(make)
   print_succ_or_fail ${RES2}
 fi

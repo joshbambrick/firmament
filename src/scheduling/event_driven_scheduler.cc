@@ -27,14 +27,14 @@
 DEFINE_int64(task_fail_timeout, 60, "Time (in seconds) after which to declare "
              "a task as failed if it has not sent heartbeats");
 
- DEFINE_float(reservation_safety_margin, 0.1,
-              "Safety margin value for updating task reservations..");
+DEFINE_double(reservation_safety_margin, 0.1,
+             "Safety margin value for updating task reservations..");
 
- DEFINE_float(reservation_increment, 0.9,
-              "Increment value for updating task reservations."); 
+DEFINE_double(reservation_increment, 0.9,
+             "Increment value for updating task reservations."); 
 
- DEFINE_float(reservation_overshoot_boost, 1.5,
-              "Overshoot boost value for updating task reservations."); 
+DEFINE_double(reservation_overshoot_boost, 1.5,
+             "Overshoot boost value for updating task reservations."); 
 
 namespace firmament {
 namespace scheduler {
@@ -172,7 +172,7 @@ void EventDrivenScheduler::ExecuteTask(TaskDescriptor* td_ptr,
                                        ResourceDescriptor* rd_ptr) {
   TaskID_t task_id = td_ptr->uid();
   // Initialize resource reservations
-  td_ptr->mutable_resource_reservations()->CopyFrom(td_ptr.resource_request());
+  td_ptr->mutable_resource_reservations()->CopyFrom(td_ptr->resource_request());
   ResourceID_t res_id = ResourceIDFromString(rd_ptr->uuid());
   // Remove the task from the runnable set
   CHECK_EQ(runnable_tasks_.erase(task_id), 1)
@@ -702,32 +702,34 @@ bool EventDrivenScheduler::UnbindTaskFromResource(TaskDescriptor* td_ptr,
 }
 
 void EventDrivenScheduler::UpdateTaskResourceReservations() {
- for (ResourceMap_t::const_iterator itm = *resource_map_.begin();
-       itm != *resource_map_.end();
+ for (ResourceMap_t::const_iterator itm = resource_map_->begin();
+       itm != resource_map_->end();
        ++itm) {
     vector<TaskID_t> tasks = BoundTasksForResource(itm->first);
 
-    for (vector<TaskID_t>::iterator itv = *tasks.begin();
-         itv != *tasks.end();
+    for (vector<TaskID_t>::iterator itv = tasks.begin();
+         itv != tasks.end();
          ++itv) {
       TaskID_t task_id = *itv;
-      TaskPerfStatisticsSample* stats =
-          knowledge_base->GetLatestStatsForTask(task_id);
-      int usage_ram = stats->resources()->ram_bw();
+      const TaskPerfStatisticsSample* stats =
+          knowledge_base()->GetLatestStatsForTask(task_id);
+      int usage_ram = stats->resources().ram_bw();
       TaskDescriptor* td_ptr = FindPtrOrNull(*task_map_, task_id);
-      ResourceVector* reservations = td_ptr->resource_reservations();
+      ResourceVector* reservations = td_ptr->mutable_resource_reservations();
       // Knowledge Base may not be up to date or this may be a remote resource.
       if (reservations != NULL) {
-        int reservation_ram = reservations->ram_cap();
-        if (usage_ram > reservation_ram) {
-          int cap = (int) (reservation_ram * FLAGS_reservation_overshoot_boost);
-          td_ptr->resource_reservations()->set_ram_cap(cap);
+        int current_reservation_ram = reservations->ram_cap();
+        int updated_reservation_ram = 0;
+        if (usage_ram > current_reservation_ram) {
+          updated_reservation_ram = (int) (current_reservation_ram
+                                          * FLAGS_reservation_overshoot_boost);
         } else {
-          int expected = (int) (reservation_ram * FLAGS_reservation_increment);
+          int expected = (int) (current_reservation_ram *
+                                            FLAGS_reservation_increment);
           int safety = (int) floor(FLAGS_reservation_safety_margin * usage_ram);
-          int safe_new_reservation = max(expected, safety);
-          td_ptr->resource_reservations()->set_ram_cap(safe_new_reservation);
+          updated_reservation_ram = max(expected, safety);
         }
+        reservations->set_ram_cap(updated_reservation_ram);
       }
     }
   }

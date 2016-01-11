@@ -28,7 +28,7 @@
 
 
 DEFINE_string(coordinator_uri, "", "The URI to contact the coordinator at.");
-DEFINE_int32(container_monitor_uri, "",
+DEFINE_string(container_monitor_uri, "",
              "The URI of the container monitor");
 DEFINE_string(resource_id, "",
         "The resource ID that is running this task.");
@@ -62,6 +62,7 @@ TaskLib::TaskLib()
         StreamSocketsChannel<BaseMessage>::SS_TCP)),
     coordinator_uri_(getenv("FLAGS_coordinator_uri")),
     container_monitor_uri_(getenv("FLAGS_container_monitor_uri")),
+    task_container_name_(getenv("FLAGS_task_container_name")),
     resource_id_(ResourceIDFromString(getenv("FLAGS_resource_id"))),
     pid_(getpid()),
     task_running_(false),
@@ -134,9 +135,9 @@ void TaskLib::Stop(bool success) {
 }
 
 void TaskLib::AddTaskResourcesToHeartbeat(TaskPerfStatisticsSample* stats) {
-  stats->mutable_resources()
-      ->CopyFrom(ContainerMonitorCreateResourceVector(
-          container_monitor_uri_, task_container_name_));
+  ResourceVector res = ContainerMonitorCreateResourceVector(
+          container_monitor_uri_, task_container_name_);
+  stats->mutable_resources()->CopyFrom(res);
 }
 
 void TaskLib::AddTaskStatisticsToHeartbeat(

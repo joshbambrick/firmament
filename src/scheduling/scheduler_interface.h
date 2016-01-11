@@ -85,11 +85,6 @@ class SchedulerInterface : public PrintableInterface {
   virtual void CheckRunningTasksHealth() = 0;
 
   /**
-   * Updates knowledge base with the task resource usage of all tasks.
-   */
-  virtual void UpdateTaskResourceUsageKnowledge() = 0;
-
-  /**
    * Updates the resource reservations for running tasks.
    */
   virtual void UpdateTaskResourceReservations() = 0;

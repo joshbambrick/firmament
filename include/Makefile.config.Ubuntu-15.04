@@ -132,12 +132,12 @@ export LXC_LIB
 #######################################
 
 # Header directory for cpprest
-CPPREST_INC_DIR ?= $(EXT_DIR)/casablanca/Release/include/
+CPPREST_INC_DIR ?= $(EXT_DIR)/casablanca-git/Release/include/
 export CPPREST_INC_DIR
 
 # Path to the compiled cpprest library (usually under
 # "make" in the cpprest-git directory in "ext").
-CPPREST_LIB ?= $(EXT_DIR)/casablanca/Release/build.release/Binaries/libcpprest.so
+CPPREST_LIB ?= $(EXT_DIR)/casablanca-git/Release/build.release/Binaries/libcpprest.so
 export CPPREST_LIB
 
 

@@ -34,7 +34,7 @@ class KnowledgeBase {
   void AddMachineSample(const MachinePerfStatisticsSample& sample);
   void AddTaskSample(const TaskPerfStatisticsSample& sample);
 
-  TaskPerfStatisticsSample* KnowledgeBase::GetLatestStatsForTask(
+  const TaskPerfStatisticsSample* GetLatestStatsForTask(
     TaskID_t task_id) const;
 
   void DumpMachineStats(const ResourceID_t& res_id) const;

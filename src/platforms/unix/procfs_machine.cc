@@ -15,6 +15,7 @@
 #include "base/common.h"
 #include "base/units.h"
 #include "misc/string_utils.h"
+#include "misc/container_monitor_utils.h"
 
 DEFINE_string(monitor_netif, "eth0",
               "Network interface on which to monitor traffic statistics.");
@@ -77,12 +78,12 @@ const MachinePerfStatisticsSample* ProcFSMachine::CreateStatistics(
   disk_stats_ = disk_stats;
 
 
-  ResourceVector* machine_res = stats->mutable_resource_reservations());
+  ResourceVector* machine_res = stats->mutable_resource_reservations();
   machine_res->set_ram_cap(0);
-  for (vector<TaskID_t>::iterator it = machine_running_task_descs->begin();
+  for (vector<TaskDescriptor*>::iterator it = machine_running_task_descs->begin();
         it != machine_running_task_descs->end(); it++) {
-    ResourceVector task_res = it->resource_reservations();
-    machine_res->set_ram_cap(task_res->ram_cap() + machine_res->ram_cap());
+    ResourceVector task_res = (*it)->resource_reservations();
+    machine_res->set_ram_cap(task_res.ram_cap() + machine_res->ram_cap());
   }
 
   return stats;
