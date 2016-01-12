@@ -29,10 +29,11 @@ extern "C" {
 #include "misc/uri_tools.h"
 #include "misc/map-util.h"
 
+// declare since defined in coordinator (linked first)
+DECLARE_int32(container_monitor_port);
+// define since this can be overridden by a flag, not used in coordinator
 DEFINE_string(container_monitor_uri, "",
             "The URI of the container monitor.");
-DEFINE_int32(container_monitor_port, 8010,
-             "The port of the container monitor");
 DEFINE_bool(pin_tasks_to_cores, true,
             "Pin tasks to their allocated CPU core when executing.");
 DEFINE_bool(debug_tasks, false,

@@ -13,8 +13,8 @@ using namespace json;
 
 namespace firmament {
 
-void StartContainerMonitor();
-ResourceVector ContainerMonitorCreateResourceVector(
+void StartContainerMonitor(int port);
+ResourceVector ContainerMonitorCreateResourceVector(int port,
     string container_monitor_uri, string task_container_name);
 ResourceVector GetResourceUsageVector(http::uri node_uri);
 json::value GetResourceUsageJson(http::uri node_uri);

@@ -28,13 +28,9 @@
 
 
 DEFINE_string(coordinator_uri, "", "The URI to contact the coordinator at.");
-DEFINE_string(container_monitor_uri, "",
-             "The URI of the container monitor");
 DEFINE_string(resource_id, "",
         "The resource ID that is running this task.");
 DEFINE_string(task_id, "", "The ID of this task.");
-DEFINE_string(task_container_name, "",
-             "The name of the container in which this task runs.");
 DEFINE_int32(heartbeat_interval, 1000000,
         "The interval, in microseconds, between heartbeats sent to the"
         "coordinator.");
@@ -62,6 +58,7 @@ TaskLib::TaskLib()
         StreamSocketsChannel<BaseMessage>::SS_TCP)),
     coordinator_uri_(getenv("FLAGS_coordinator_uri")),
     container_monitor_uri_(getenv("FLAGS_container_monitor_uri")),
+    container_monitor_port_(atoi(getenv("FLAGS_container_monitor_port"))),
     task_container_name_(getenv("FLAGS_task_container_name")),
     resource_id_(ResourceIDFromString(getenv("FLAGS_resource_id"))),
     pid_(getpid()),
@@ -136,7 +133,7 @@ void TaskLib::Stop(bool success) {
 
 void TaskLib::AddTaskResourcesToHeartbeat(TaskPerfStatisticsSample* stats) {
   ResourceVector res = ContainerMonitorCreateResourceVector(
-          container_monitor_uri_, task_container_name_);
+        container_monitor_port_, container_monitor_uri_, task_container_name_);
   stats->mutable_resources()->CopyFrom(res);
 }
 

@@ -69,8 +69,8 @@ class TaskLib {
   // TODO(malte): transform this into a better representation
   string coordinator_uri_;
   string container_monitor_uri_;
-  string task_container_name_;
   int container_monitor_port_;
+  string task_container_name_;
   ResourceID_t resource_id_;
   TaskID_t task_id_;
   TaskDescriptor task_descriptor_;

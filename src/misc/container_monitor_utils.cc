@@ -20,22 +20,23 @@ using namespace http::client;
 
 namespace firmament {
 
-void StartContainerMonitor() {
+void StartContainerMonitor(int port) {
   string command = string("sudo docker run \
     --volume=/:/rootfs:ro \
     --volume=/var/run:/var/run:rw \
     --volume=/sys:/sys:ro \
     --volume=/var/lib/docker/:/var/lib/docker:ro \
-    --publish=8080:") + getenv("FLAGS_container_monitor_port_") + string(" \
+    --publish=8080:") + to_string(port) + string(" \
     --detach=true \
     --name=cadvisor \
     google/cadvisor:latest");
   system(command.c_str());
 }
 
-ResourceVector ContainerMonitorCreateResourceVector(
+ResourceVector ContainerMonitorCreateResourceVector(int port,
     string container_monitor_uri, string task_container_name) {
   uri_builder ub(container_monitor_uri.c_str());
+  ub.set_port(port);
   ub.append_path(U("/api/v1/stats/"));
   ub.append_path(U(task_container_name.c_str()));
   http::uri node_uri = ub.to_uri();
