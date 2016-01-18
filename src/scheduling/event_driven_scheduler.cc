@@ -79,6 +79,7 @@ EventDrivenScheduler::~EventDrivenScheduler() {
 }
 
 void EventDrivenScheduler::AddJob(JobDescriptor* jd_ptr) {
+  cout << "ADD JOB";
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
   InsertOrUpdate(&jobs_to_schedule_, JobIDFromString(jd_ptr->uuid()), jd_ptr);
 }
@@ -380,6 +381,7 @@ void EventDrivenScheduler::HandleTaskMigration(TaskDescriptor* td_ptr,
 void EventDrivenScheduler::HandleTaskPlacement(
     TaskDescriptor* td_ptr,
     ResourceDescriptor* rd_ptr) {
+  cout << "place task";
   CHECK_NOTNULL(td_ptr);
   CHECK_NOTNULL(rd_ptr);
   TaskID_t task_id = td_ptr->uid();
@@ -546,6 +548,7 @@ uint64_t EventDrivenScheduler::LazyGraphReduction(
 
 bool EventDrivenScheduler::PlaceDelegatedTask(TaskDescriptor* td,
                                               ResourceID_t target_resource) {
+  cout << "place delegated";
   // Check if the resource is available
   ResourceStatus* rs_ptr = FindPtrOrNull(*resource_map_, target_resource);
   // Do we know about this resource?

@@ -30,7 +30,8 @@ extern "C" {
 #include "misc/map-util.h"
 
 // declare since defined in coordinator (linked first)
-DECLARE_int32(container_monitor_port);
+DEFINE_int32(container_monitor_port, 8010,
+            "The port of the coordinator's container monitor");
 // define since this can be overridden by a flag, not used in coordinator
 DEFINE_string(container_monitor_uri, "",
             "The URI of the container monitor.");
@@ -435,6 +436,11 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
       const char* ram_cap = to_string(resource_reservations.ram_cap()).c_str();
       c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes",ram_cap);
       c->set_config_item(c, "lxc.cgroup.memory.memsw.limit_in_bytes",ram_cap);
+      
+      const char* disk_bw = to_string(resource_reservations.disk_bw()).c_str();
+      c->set_config_item(c, "lxc.cgroup.blkio.throttle.write_bps_device",disk_bw);
+      c->set_config_item(c, "lxc.cgroup.blkio.throttle.read_bps_device",disk_bw);
+      
 
       boost::unique_lock<boost::shared_mutex> handler_lock(container_map_mutex_);
       CHECK(InsertIfNotPresent(&task_containers_, task_id, c));

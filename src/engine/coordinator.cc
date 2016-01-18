@@ -43,8 +43,7 @@ DEFINE_bool(include_local_resources, true, "Add local machine's resources; "
             "will instantiate a resource-less coordinator if false.");
 DEFINE_string(scheduler, "simple", "Scheduler to use: one of 'simple' or "
               "'flow'.");
-DEFINE_int32(container_monitor_port, 8010,
-             "The port of the coordinator's container monitor");
+DECLARE_int32(container_monitor_port);
 #ifdef __HTTP_UI__
 DEFINE_bool(http_ui, true, "Enable HTTP interface");
 DEFINE_int32(http_ui_port, 8080,
@@ -962,6 +961,9 @@ const string Coordinator::SubmitJob(const JobDescriptor& job_descriptor) {
   // TODO(malte): This should become deterministic, and based on the
   // inputs/outputs somehow, maybe.
   JobID_t new_job_id = GenerateJobID();
+
+  cout << "submit job " << new_job_id;
+
   LOG(INFO) << "NEW JOB: " << new_job_id;
   VLOG(2) << "Details:\n" << job_descriptor.DebugString();
   // Clone the submitted JD and add job to local job table
@@ -1001,6 +1003,8 @@ const string Coordinator::SubmitJob(const JobDescriptor& job_descriptor) {
         << "Could not find reference to data object ID " << output_id
         << ", which we just added!";
   }
+
+  cout << "ask scheduler";
   // Kick off the scheduler for this job.
   uint64_t num_scheduled =
     scheduler_->ScheduleJob(FindOrNull(*job_table_, new_job_id), NULL);

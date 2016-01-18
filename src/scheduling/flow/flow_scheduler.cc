@@ -142,11 +142,14 @@ uint64_t FlowScheduler::ApplySchedulingDeltas(
       // We should not get any NOOP deltas as they get filtered before.
       continue;
     } else if (delta->type() == SchedulingDelta::PLACE) {
+      cout << "TASK Placement";
       HandleTaskPlacement(td_ptr, rs->mutable_descriptor());
       num_scheduled++;
     } else if (delta->type() == SchedulingDelta::PREEMPT) {
+      cout << "TASK Eviction";
       HandleTaskEviction(td_ptr, rs->mutable_descriptor());
     } else if (delta->type() == SchedulingDelta::MIGRATE) {
+      cout << "TASK Migration";
       HandleTaskMigration(td_ptr, rs->mutable_descriptor());
     } else {
       LOG(FATAL) << "Unhandled scheduling delta case";
@@ -297,6 +300,7 @@ uint64_t FlowScheduler::ScheduleAllJobs(SchedulerStats* scheduler_stats) {
 
 uint64_t FlowScheduler::ScheduleJob(JobDescriptor* jd_ptr,
                                     SchedulerStats* scheduler_stats) {
+  cout << "start scheduler";
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
   LOG(INFO) << "START SCHEDULING (via " << jd_ptr->uuid() << ")";
   LOG(WARNING) << "This way of scheduling a job is slow in the flow scheduler! "
@@ -358,6 +362,8 @@ void FlowScheduler::RegisterResource(ResourceID_t res_id,
 
 uint64_t FlowScheduler::RunSchedulingIteration(
     SchedulerStats* scheduler_stats) {
+
+  cout << "iteration running";
   // If this is the first iteration ever, we should ensure that the cost
   // model's notion of statistics is correct.
   if (solver_dispatcher_->seq_num() == 0)
