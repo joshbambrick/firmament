@@ -13,6 +13,8 @@
 #include "base/common.h"
 #include "base/types.h"
 #include "base/task_final_report.pb.h"
+#include "messages/task_heartbeat_message.pb.h"
+#include "messages/task_state_message.pb.h"
 
 namespace firmament {
 namespace executor {
@@ -26,7 +28,10 @@ class ExecutorInterface : public PrintableInterface {
   virtual void HandleTaskFailure(TaskDescriptor* td) = 0;
   virtual void RunTask(TaskDescriptor* td,
                        bool firmament_binary) = 0;
+  virtual void KillTask(TaskDescriptor* td) = 0;
   virtual ostream& ToString(ostream* stream) const = 0;
+  virtual void CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeats) = 0;
+  virtual void CreateTaskStateChanges(vector<TaskStateMessage>* state_messages) = 0;
 
  protected:
 };

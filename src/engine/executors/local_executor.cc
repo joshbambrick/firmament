@@ -119,14 +119,18 @@ char* LocalExecutor::AddDebuggingToCommandLine(vector<char*>* argv) {
 }
 
 bool LocalExecutor::CheckRunningTasksHealth(vector<TaskID_t>* failed_tasks) {
-  return health_checker_.Run(failed_tasks);
+  boost::unique_lock<boost::shared_mutex> details_lock(task_finalize_message_map_mutex_);
+  return health_checker_.Run(failed_tasks, &task_finalize_messages_);
 }
 
 void LocalExecutor::CleanUpCompletedTask(const TaskDescriptor& td) {
   // Drop task handler thread
   boost::unique_lock<boost::shared_mutex> handler_lock(handler_map_mutex_);
-  boost::unique_lock<boost::shared_mutex> pid_lock(pid_map_mutex_);
+  boost::unique_lock<boost::shared_mutex> pids_lock(pid_map_mutex_);
+  boost::unique_lock<boost::shared_mutex> running_lock(task_running_map_mutex_);
   task_handler_threads_.erase(td.uid());
+  // Kill container
+  ShutdownContainerIfRunning(td.uid());
   // Issue a kill to make double-sure that the task has finished
   // XXX(malte): this is a hack!
   pid_t* pid = FindOrNull(task_pids_, td.uid());
@@ -134,6 +138,7 @@ void LocalExecutor::CleanUpCompletedTask(const TaskDescriptor& td) {
   int ret = kill(*pid, SIGKILL);
   LOG(INFO) << "kill(2) for task " << td.uid() << " returned " << ret;
   task_pids_.erase(td.uid());
+  task_running_.erase(td.uid());
 }
 
 
@@ -229,6 +234,11 @@ void LocalExecutor::HandleTaskCompletion(TaskDescriptor* td,
 
 void LocalExecutor::HandleTaskEviction(TaskDescriptor* td) {
   // TODO(ionel): Implement.
+}
+
+void LocalExecutor::KillTask(TaskDescriptor* td) {
+  SetFinalizeMessage(td->uid(), false);
+  HandleTaskFailure(td);
 }
 
 void LocalExecutor::HandleTaskFailure(TaskDescriptor* td) {
@@ -383,6 +393,15 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
   VLOG(1) << "About to fork child process for task execution of "
           << task_id << "!";
   pid = fork();
+
+  string container_name = GetTaskContainerName(task_id);
+  {
+    boost::unique_lock<boost::shared_mutex> containers_lock(task_container_names_map_mutex_);
+    CHECK(InsertIfNotPresent(&task_container_names_, task_id, container_name));
+    boost::unique_lock<boost::shared_mutex> running_lock(task_running_map_mutex_);
+    CHECK(InsertOrUpdate(&task_running_, task_id, true));
+  }
+
   switch (pid) {
     case -1:
       // Error
@@ -419,14 +438,14 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
 #ifdef __linux__
       prctl(PR_SET_PDEATHSIG, SIGHUP);
 #endif
-      _exit(ExecuteBinaryInContainer(task_id, env["FLAGS_task_data_dir"],
-        argv, env_strings, resource_reservations));
+     _exit(ExecuteBinaryInContainer(task_id, env["FLAGS_task_data_dir"],
+                    argv, env_strings, resource_reservations, container_name));
     }
     default:
       // Parent
       VLOG(1) << "Task process with PID " << pid << " created.";
       {
-        boost::unique_lock<boost::shared_mutex> handler_lock(pid_map_mutex_);
+        boost::unique_lock<boost::shared_mutex> pid_lock(pid_map_mutex_);
         CHECK(InsertIfNotPresent(&task_pids_, task_id, pid));
       }
       // Pin the task to the appropriate resource
@@ -439,9 +458,17 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
       while (waitpid(pid, &status, 0) != pid) {
         VLOG(3) << "Waiting for child process " << pid << " to exit...";
       }
+      {
+        boost::unique_lock<boost::shared_mutex> running_lock(task_running_map_mutex_);
+        CHECK(!InsertOrUpdate(&task_running_, task_id, false));
+      }
+
       if (WIFEXITED(status)) {
         VLOG(1) << "Task process with PID " << pid << " exited with status "
                 << WEXITSTATUS(status);
+        if (status == 0) {
+          SetFinalizeMessage(task_id, true);
+        }
       } else if (WIFSIGNALED(status)) {
         VLOG(1) << "Task process with PID " << pid << " exited due to uncaught "
                 << "signal " << WTERMSIG(status);
@@ -456,12 +483,12 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
   return -1;
 }
 
-int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id, string data_dir,
-                              vector<char*> argv, vector<string> env_strings,
-                              ResourceVector resource_reservations) {
-  string container_name = GetTaskContainerName(task_id);
-
-
+int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
+                                            string data_dir,
+                                            vector<char*> argv,
+                                            vector<string> env_strings,
+                                            ResourceVector resource_reservations,
+                                            string container_name) {
   lxc_container *c = lxc_container_new(container_name.c_str(), NULL);
   if (!c->createl(c, "ubuntu", NULL, NULL, LXC_CREATE_QUIET,
                 "-r", "trusty", "--user", "ubuntu", "--password", "ubuntu", NULL)) {
@@ -491,31 +518,110 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id, string data_dir,
                               + " none defaults,bind,create=dir 0 0").c_str());
   c->set_config_item(c, "lxc.mount.entry", (full_data_dir + " " + full_data_dir.substr(1)
                               + " none defaults,bind,create=dir 0 0").c_str());
-
-  {
-    boost::unique_lock<boost::shared_mutex> handler_lock(container_map_mutex_);
-    CHECK(InsertIfNotPresent(&task_containers_, task_id, c));
-  }
-
   c->start(c, 0, NULL);
 
   lxc_attach_options_t attach_options = LXC_ATTACH_OPTIONS_DEFAULT;
 
   // Change to task's working directory
-  attach_options.initial_cwd = (char*) data_dir.c_str();
+  attach_options.initial_cwd = (char*) full_data_dir.c_str();
 
   int res = -1;
   res = c->attach_run_wait(c, &attach_options, argv[0], &argv[0]);
 
-  if (!c->shutdown(c, 30)) {
-    c->stop(c)
-  }
-
-  c->destroy(c);
-
-  lxc_container_put(c);
+  ShutdownContainerIfRunning(task_id);
 
   return res != -1 ? 0 : res;
+}
+
+void LocalExecutor::CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeats) {
+  boost::shared_lock<boost::shared_mutex> handler_lock(handler_map_mutex_);
+  boost::unique_lock<boost::shared_mutex> messages_lock(task_finalize_message_map_mutex_);
+  boost::unique_lock<boost::shared_mutex> running_lock(task_running_map_mutex_);
+
+  for (unordered_map<TaskID_t, boost::thread*>::const_iterator
+       it = task_handler_threads_.begin();
+       it != task_handler_threads_.end();
+       ++it) {
+      bool* state_message_sent = FindOrNull(task_finalize_messages_sent_, it->first);
+      bool* task_running = FindOrNull(task_running_, it->first);
+
+      if (task_running && *task_running && (!state_message_sent || !*state_message_sent)) {
+        heartbeats->push_back(CreateTaskHeartbeat(it->first));
+      }
+  }
+}
+
+TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
+  boost::unique_lock<boost::shared_mutex> heartbeat_lock(task_heartbeat_sequence_numbers_map_mutex_);
+  uint64_t* heartbeat_sequence_number_ptr = FindOrNull(task_heartbeat_sequence_numbers_, task_id);
+  uint64_t heartbeat_sequence_number = 0;
+  if (heartbeat_sequence_number_ptr) {
+    heartbeat_sequence_number = *heartbeat_sequence_number_ptr + 1;
+  }
+
+  TaskHeartbeatMessage task_heartbeat;
+  task_heartbeat.set_task_id(task_id);
+  task_heartbeat.set_sequence_number(heartbeat_sequence_number);
+  InsertOrUpdate(&task_heartbeat_sequence_numbers_, task_id, heartbeat_sequence_number);
+  return task_heartbeat;
+}
+
+void LocalExecutor::CreateTaskStateChanges(vector<TaskStateMessage>* state_messages) {
+  boost::shared_lock<boost::shared_mutex> handler_lock(handler_map_mutex_);
+  boost::unique_lock<boost::shared_mutex> messages_lock(task_finalize_message_map_mutex_);
+
+  for (unordered_map<TaskID_t, boost::thread*>::const_iterator
+       it = task_handler_threads_.begin();
+       it != task_handler_threads_.end();
+       ++it) {
+      TaskStateMessage* state_message = FindOrNull(task_finalize_messages_, it->first);
+      bool* state_message_sent = FindOrNull(task_finalize_messages_sent_, it->first);
+
+      if (state_message && (!state_message_sent || !*state_message_sent)) {
+        state_messages->push_back(*state_message);
+        InsertOrUpdate(&task_finalize_messages_sent_, it->first, true);
+      }
+  }
+}
+
+void LocalExecutor::SetFinalizeMessage(TaskID_t task_id, bool success) {
+  boost::unique_lock<boost::shared_mutex> messages_lock(task_finalize_message_map_mutex_);
+  TaskStateMessage* message = FindOrNull(task_finalize_messages_, task_id);
+
+  
+  if (!message) {
+    TaskStateMessage finalize_message;
+    finalize_message.set_id(task_id);
+    finalize_message.set_new_state(success ? TaskDescriptor::COMPLETED : TaskDescriptor::ABORTED);
+    CHECK(InsertIfNotPresent(&task_finalize_messages_, task_id, finalize_message));
+  }
+}
+
+
+void LocalExecutor::ShutdownContainerIfRunning(TaskID_t task_id) {
+  cout << "shutdown" << endl;
+  boost::unique_lock<boost::shared_mutex> containers_lock(task_container_names_map_mutex_);
+  string* container_name = FindOrNull(task_container_names_, task_id);
+  
+
+  if (container_name) {
+    task_container_names_.erase(task_id);
+    lxc_container *container = lxc_container_new(container_name->c_str(), NULL);
+    if (container->is_running(container)) {
+      if (!container->shutdown(container, 30)) {
+        if (!container->stop(container)) {
+        } else {
+        }
+      } else {
+      }
+
+      if (!container->destroy(container)) {
+      } else {
+      }
+    }
+
+    lxc_container_put(container);
+  }
 }
 
 string LocalExecutor::PerfDataFileName(const TaskDescriptor& td) {

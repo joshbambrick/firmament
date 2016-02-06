@@ -19,6 +19,8 @@
 #include "engine/executors/local_executor.h"
 #include "engine/executors/remote_executor.h"
 #include "engine/executors/simulated_executor.h"
+#include "messages/task_heartbeat_message.pb.h"
+#include "messages/task_state_message.pb.h"
 #include "scheduling/knowledge_base.h"
 #include "storage/object_store_interface.h"
 #include "storage/reference_types.h"
@@ -415,16 +417,12 @@ void EventDrivenScheduler::KillRunningTask(
                << "so cannot kill it!";
     return;
   }
-  // Find the current remote endpoint for this task
-  TaskDescriptor* td = FindPtrOrNull(*task_map_, task_id);
-  // Manufacture the message
-  BaseMessage bm;
-  SUBMSG_WRITE(bm, task_kill, task_id, task_id);
-  SUBMSG_WRITE(bm, task_kill, reason, reason);
-  // Send the message
-  LOG(INFO) << "Sending KILL message to task " << task_id << " on resource "
-            << *rid << " (endpoint: " << td->last_heartbeat_location()  << ")";
-  m_adapter_ptr_->SendMessageToEndpoint(td->last_heartbeat_location(), bm);
+  // Find the executor for this task
+  ExecutorInterface* exec = FindPtrOrNull(executors_, *rid);
+  CHECK_NOTNULL(exec);
+
+  // Kill the task on the executor
+  exec->KillTask(td_ptr);
 }
 
 // Implementation of lazy graph reduction algorithm, as per p58, fig. 3.5 in
@@ -755,5 +753,24 @@ ResourceID_t EventDrivenScheduler::MachineResIDForResource(
   return ResourceIDFromString(rtnd->resource_desc().uuid());
 }
 
+vector<TaskHeartbeatMessage> EventDrivenScheduler::CreateTaskHeartbeats() {
+  boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+  vector<TaskHeartbeatMessage> task_heartbeats;
+  for (auto& executor : executors_) {
+    executor.second->CreateTaskHeartbeats(&task_heartbeats);
+  }
+
+  return task_heartbeats;
+}
+
+vector<TaskStateMessage> EventDrivenScheduler::CreateTaskStateChanges() {
+  boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+  vector<TaskStateMessage> task_state_changes;
+  for (auto& executor : executors_) {
+    executor.second->CreateTaskStateChanges(&task_state_changes);
+  }
+
+  return task_state_changes;
+}
 }  // namespace scheduler
 }  // namespace firmament

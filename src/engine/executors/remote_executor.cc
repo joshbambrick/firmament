@@ -10,6 +10,8 @@
 #include "misc/map-util.h"
 #include "messages/base_message.pb.h"
 #include "messages/task_delegation_message.pb.h"
+#include "messages/task_heartbeat_message.pb.h"
+#include "messages/task_state_message.pb.h"
 #include "misc/utils.h"
 
 // TODO(malte): this is a bit of a hack; we import the listen_uri flag here
@@ -36,6 +38,18 @@ RemoteExecutor::RemoteExecutor(
 bool RemoteExecutor::CheckRunningTasksHealth(vector<TaskID_t>* failed_tasks) {
   // TODO(malte): Implement!
   return true;
+}
+
+void RemoteExecutor::KillTask(TaskDescriptor* td) {
+  // TODO: Implement
+}
+
+void RemoteExecutor::CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeats) {
+  // TODO: Implement
+}
+
+void RemoteExecutor::CreateTaskStateChanges(vector<TaskStateMessage>* state_messages) {
+  // TODO: Implement
 }
 
 void RemoteExecutor::HandleTaskCompletion(TaskDescriptor* td,

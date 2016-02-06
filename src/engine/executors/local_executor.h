@@ -30,6 +30,8 @@ extern "C" {
 #include "base/common.h"
 #include "base/types.h"
 #include "base/task_final_report.pb.h"
+#include "messages/task_heartbeat_message.pb.h"
+#include "messages/task_state_message.pb.h"
 #include "engine/executors/task_health_checker.h"
 #include "engine/executors/topology_manager.h"
 
@@ -52,6 +54,9 @@ class LocalExecutor : public ExecutorInterface {
   void HandleTaskFailure(TaskDescriptor* td);
   void RunTask(TaskDescriptor* td,
                bool firmament_binary);
+  void KillTask(TaskDescriptor* td);
+  void CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeats);
+  void CreateTaskStateChanges(vector<TaskStateMessage>* state_messages);
   virtual ostream& ToString(ostream* stream) const {
     return *stream << "<LocalExecutor at resource "
                    << to_string(local_resource_id_)
@@ -97,7 +102,11 @@ class LocalExecutor : public ExecutorInterface {
                                string data_dir,
                                vector<char*> argv,
                                vector<string> env_strings,
-                               ResourceVector resource_reservations);
+                               ResourceVector resource_reservations,
+                               string container_name);
+  void ShutdownContainerIfRunning(TaskID_t task_id);
+  TaskHeartbeatMessage CreateTaskHeartbeat(TaskID_t task_id);
+  void SetFinalizeMessage(TaskID_t task_id, bool success);
   string PerfDataFileName(const TaskDescriptor& td);
   void ReadFromPipe(int fd);
   void SetUpEnvironmentForTask(const TaskDescriptor& td,
@@ -119,15 +128,21 @@ class LocalExecutor : public ExecutorInterface {
   // nanoseconds.
   uint64_t heartbeat_interval_;
   boost::mutex exec_mutex_;
+  boost::shared_mutex task_running_map_mutex_;
   boost::shared_mutex handler_map_mutex_;
   boost::shared_mutex pid_map_mutex_;
+  boost::shared_mutex task_finalize_message_map_mutex_;
+  boost::shared_mutex task_container_names_map_mutex_;
+  boost::shared_mutex task_heartbeat_sequence_numbers_map_mutex_;
   boost::condition_variable exec_condvar_;
   // Map to each task's local handler thread
   unordered_map<TaskID_t, boost::thread*> task_handler_threads_;
   unordered_map<TaskID_t, pid_t> task_pids_;
-  // Map to each task's containers
-  boost::shared_mutex container_map_mutex_;
-  unordered_map<TaskID_t, lxc_container*> task_containers_;
+  unordered_map<TaskID_t, TaskStateMessage> task_finalize_messages_;
+  unordered_map<TaskID_t, bool> task_finalize_messages_sent_;
+  unordered_map<TaskID_t, bool> task_running_;
+  unordered_map<TaskID_t, string> task_container_names_;
+  unordered_map<TaskID_t, uint64_t> task_heartbeat_sequence_numbers_;
 };
 
 }  // namespace executor

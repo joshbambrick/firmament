@@ -19,6 +19,8 @@
 #include "misc/printable_interface.h"
 #include "engine/executors/executor_interface.h"
 #include "engine/executors/topology_manager.h"
+#include "messages/task_heartbeat_message.pb.h"
+#include "messages/task_state_message.pb.h"
 #include "scheduling/knowledge_base.h"
 #include "storage/object_store_interface.h"
 
@@ -88,6 +90,16 @@ class SchedulerInterface : public PrintableInterface {
    * Updates the resource reservations for running tasks.
    */
   virtual void UpdateTaskResourceReservations() = 0;
+
+  /**
+   * Creates heartbeats for tasks managed by this scheduler.
+   */
+  virtual vector<TaskHeartbeatMessage> CreateTaskHeartbeats() = 0;
+
+  /**
+   * Creates state for tasks managed by this scheduler.
+   */
+  virtual vector<TaskStateMessage> CreateTaskStateChanges() = 0;
 
   /**
    * Unregisters a resource ID from the scheduler. No-op if the resource ID is

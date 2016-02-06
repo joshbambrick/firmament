@@ -76,6 +76,8 @@ class EventDrivenScheduler : public SchedulerInterface {
     return *stream << "<EventDrivenScheduler>";
   }
   virtual void UpdateTaskResourceReservations();
+  vector<TaskHeartbeatMessage> CreateTaskHeartbeats();
+  vector<TaskStateMessage> CreateTaskStateChanges();
 
  protected:
   FRIEND_TEST(SimpleSchedulerTest, FindRunnableTasksForJob);

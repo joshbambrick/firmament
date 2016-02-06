@@ -228,6 +228,7 @@ class Coordinator : public Node,
                    bool local);
   bool RegisterWithCoordinator(StreamSocketsChannel<BaseMessage>* chan);
   void DetectLocalResources();
+  void PullTaskMessages();
   bool HasJobCompleted(const JobDescriptor& jd);
   void HandleCreateRequest(const CreateRequest& msg,
                            const string& remote_endpoint);
@@ -282,6 +283,7 @@ class Coordinator : public Node,
   // coordinators and running tasks.
   HealthMonitor health_monitor_;
   boost::thread* health_monitor_thread_;
+  boost::thread* pull_task_messages_thread_;
   // The topology manager associated with this coordinator; responsible for the
   // local resources.
   shared_ptr<TopologyManager> topology_manager_;

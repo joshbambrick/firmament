@@ -7,6 +7,8 @@
 #include <vector>
 
 #include "base/units.h"
+#include "messages/task_heartbeat_message.pb.h"
+#include "messages/task_state_message.pb.h"
 
 namespace firmament {
 namespace executor {
@@ -19,6 +21,21 @@ SimulatedExecutor::SimulatedExecutor(ResourceID_t resource_id,
 bool SimulatedExecutor::CheckRunningTasksHealth(
     vector<TaskID_t>* failed_tasks) {
   return true;
+}
+
+void SimulatedExecutor::KillTask(TaskDescriptor* td) {
+  // No-op.
+  // The simulator is responsible for updating the task's state.
+}
+
+void SimulatedExecutor::CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeats) {
+  // No-op.
+  // The simulator is responsible for updating the task's state.
+}
+
+void SimulatedExecutor::CreateTaskStateChanges(vector<TaskStateMessage>* state_messages) {
+  // No-op.
+  // The simulator is responsible for updating the task's state.
 }
 
 void SimulatedExecutor::HandleTaskCompletion(TaskDescriptor* td_ptr,

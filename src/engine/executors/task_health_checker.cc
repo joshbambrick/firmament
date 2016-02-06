@@ -22,7 +22,8 @@ TaskHealthChecker::TaskHealthChecker(
     handler_map_lock_(handler_map_lock) {
 }
 
-bool TaskHealthChecker::Run(vector<TaskID_t>* failed_tasks) {
+bool TaskHealthChecker::Run(vector<TaskID_t>* failed_tasks,
+    const unordered_map<TaskID_t, TaskStateMessage>* task_finalize_messages) {
   bool all_good = true;
   boost::shared_lock<boost::shared_mutex> map_lock(*handler_map_lock_);
   for (unordered_map<TaskID_t, boost::thread*>::const_iterator
@@ -30,7 +31,8 @@ bool TaskHealthChecker::Run(vector<TaskID_t>* failed_tasks) {
        it != handler_thread_map_->end();
        ++it) {
     VLOG(2) << "Checking liveness of task " << it->first;
-    if (!CheckTaskLiveness(it->first, it->second)) {
+    if (!CheckTaskLiveness(it->first, it->second)
+                    && !CheckTaskCompleted(it->first, task_finalize_messages)) {
       all_good = false;
       LOG(ERROR) << "Task " << it->first << " has failed!";
       failed_tasks->push_back(it->first);
@@ -50,7 +52,16 @@ bool TaskHealthChecker::CheckTaskLiveness(TaskID_t task_id,
   if (handler_thread->try_join_for(boost::chrono::seconds(1)))
     return false;
 #endif
+  if (!handler_thread->joinable())
+    return false;
+
   return true;
+}
+
+bool TaskHealthChecker::CheckTaskCompleted(TaskID_t task_id,
+  const unordered_map<TaskID_t, TaskStateMessage>* task_finalize_messages) {
+  const TaskStateMessage* message = FindOrNull(*task_finalize_messages, task_id);
+  return message;
 }
 
 }  // namespace firmament

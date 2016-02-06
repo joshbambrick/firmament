@@ -24,6 +24,8 @@
 #include "messages/base_message.pb.h"
 #include "messages/storage_registration_message.pb.h"
 #include "messages/storage_message.pb.h"
+#include "messages/task_state_message.pb.h"
+#include "messages/task_heartbeat_message.pb.h"
 #include "misc/pb_utils.h"
 #include "misc/protobuf_envelope.h"
 #include "misc/map-util.h"
@@ -117,6 +119,9 @@ Coordinator::Coordinator(PlatformID platform_id)
   health_monitor_thread_ =
     new boost::thread(boost::bind(&HealthMonitor::Run, health_monitor_,
                                   scheduler_, associated_resources_));
+
+  pull_task_messages_thread_
+    = new boost::thread(boost::bind(&Coordinator::PullTaskMessages, this));
 
   if (FLAGS_populate_knowledge_base_from_file) {
     scheduler_->knowledge_base()->LoadKnowledgeBaseFromFile();
@@ -325,6 +330,27 @@ bool Coordinator::HasJobCompleted(const JobDescriptor& jd) {
   }
   LOG(INFO) << "Job " << jd.uuid() << " has completed.";
   return true;
+}
+
+void Coordinator::PullTaskMessages() {
+  while (true) {
+    usleep(FLAGS_heartbeat_interval);
+    VLOG(1) << "Pulling messages from tasks";
+
+    vector<TaskStateMessage> states = scheduler_->CreateTaskStateChanges();
+    for (vector<TaskStateMessage>::iterator it = states.begin();
+           it != states.end();
+           ++it) {
+      HandleTaskStateChange(*it);
+    }
+
+    vector<TaskHeartbeatMessage> heartbeats = scheduler_->CreateTaskHeartbeats();
+    for (vector<TaskHeartbeatMessage>::iterator it = heartbeats.begin();
+           it != heartbeats.end();
+           ++it) {
+      HandleTaskHeartbeat(*it);
+    }
+  }
 }
 
 void Coordinator::HandleIncomingMessage(BaseMessage *bm,

@@ -22,6 +22,7 @@
 
 #include "base/common.h"
 #include "base/types.h"
+#include "messages/task_state_message.pb.h"
 
 namespace firmament {
 
@@ -30,10 +31,14 @@ class TaskHealthChecker {
   TaskHealthChecker(
       const unordered_map<TaskID_t, boost::thread*>* handler_thread_map,
       boost::shared_mutex* handler_map_lock);
-  bool Run(vector<TaskID_t>* failed_tasks);
+  bool Run(vector<TaskID_t>* failed_tasks,
+	    const unordered_map<TaskID_t, TaskStateMessage>* task_finalize_messages);
+
 
  protected:
   bool CheckTaskLiveness(TaskID_t task_id, boost::thread* handler_thread);
+  bool CheckTaskCompleted(TaskID_t task_id,
+    const unordered_map<TaskID_t, TaskStateMessage>* task_finalize_messages);
 
   const unordered_map<TaskID_t, boost::thread*>* handler_thread_map_;
   boost::shared_mutex* handler_map_lock_;
