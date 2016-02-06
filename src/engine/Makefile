@@ -111,7 +111,7 @@ $(OBJ_DIR)/coordinator: $(addprefix $(OBJ_DIR)/, $(COORD_OBJS)) \
 	$(call quiet-command, \
 		$(CXX) $(CPPFLAGS) \
 		$(SRC_ROOT_DIR)/engine/coordinator_main.cc \
-		$(OPTFLAGS) -fsanitize=address $(DEFINES) \
+		$(OPTFLAGS) $(DEFINES) \
 		$(BUILD_DIR)/scheduling/knowledge_base.o \
 		$(addprefix $(OBJ_DIR)/, $(COORD_OBJS)) \
 		$(BUILD_DIR)/platforms/common.pb.o \

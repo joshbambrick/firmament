@@ -17,9 +17,11 @@ extern "C" {
 #include <sys/wait.h>
 #include <unistd.h>
 #include <lxc/lxccontainer.h>
+#include <lxc/attach_options.h>
 }
 #include <fstream>
 #include <boost/regex.hpp>
+#include <boost/filesystem/operations.hpp>
 
 #include "base/common.h"
 #include "base/types.h"
@@ -41,7 +43,7 @@ DEFINE_bool(debug_tasks, false,
             "Run tasks through a debugger (gdb).");
 DEFINE_uint64(debug_interactively, 0,
               "Run this task ID inside an interactive debugger.");
-DEFINE_bool(perf_monitoring, true,
+DEFINE_bool(perf_monitoring, false,
             "Enable performance monitoring for tasks executed.");
 DEFINE_string(task_lib_dir, "build/engine/",
               "Path where task_lib.a and task_lib_inject.so are.");
@@ -272,8 +274,10 @@ bool LocalExecutor::_RunTask(TaskDescriptor* td,
   // arguments: binary (path + name), arguments, performance monitoring on/off,
   // debugging flags, is this a Firmament task binary? (on/off; will cause
   // default arugments to be passed)
+
+  ResourceVector resource_reservations/* = td->resource_reservations()*/;
   bool res = (RunProcessSync(
-      td->uid(), td->binary(), args, env, td->resource_reservations(),
+      td->uid(), td->binary(), args, env, resource_reservations,
       FLAGS_perf_monitoring, (FLAGS_debug_tasks ||
                               ((FLAGS_debug_interactively != 0) &&
                                    (td->uid() == FLAGS_debug_interactively))),
@@ -363,7 +367,7 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
     env_strings[i] = it->first + "=" + it->second;
     ++i;
   }
-  
+
   // Print the whole command line
   string full_cmd_line;
   for (vector<char*>::const_iterator arg_iter = argv.begin();
@@ -389,17 +393,15 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
       // Set up stderr and stdout log redirections to files
       int stdout_fd = open(tasklog_stdout.c_str(),
                            O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
-      dup2(stdout_fd, STDOUT_FILENO);
+      // TODO(Josh): Re-enable this
+      // dup2(stdout_fd, STDOUT_FILENO);
       int stderr_fd = open(tasklog_stderr.c_str(),
                            O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
       dup2(stderr_fd, STDERR_FILENO);
-      if (close(stdout_fd) != 0)
+      if (close(stdout_fd) != 0) 
         PLOG(FATAL) << "Failed to close stdout FD in child";
       if (close(stderr_fd) != 0)
         PLOG(FATAL) << "Failed to close stderr FD in child";
-
-      // Change to task's working directory
-      chdir(env["FLAGS_task_data_dir"].c_str());
 
       // Close the open FDs in the child before exec-ing, so that the task does
       // not inherit all of the coordinator's sockets and FDs.
@@ -417,49 +419,8 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
 #ifdef __linux__
       prctl(PR_SET_PDEATHSIG, SIGHUP);
 #endif
-
-      // will this clash if other threads are created? maybe need a map from thread to container
-      string container_name = GetTaskContainerName(task_id);
-
-      lxc_container *c;
-
-      c = lxc_container_new(container_name.c_str(), NULL);
-      c->createl(c, "ubuntu", NULL, NULL, LXC_CREATE_QUIET, "-r", "trusty");
-
-
-      for (vector<string>::const_iterator it = env_strings.begin();
-              it != env_strings.end(); ++it) {
-          c->set_config_item(c, "lxc.environment", it->c_str());
-      }
-
-
-      const char* ram_cap = to_string(resource_reservations.ram_cap()).c_str();
-      c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes",ram_cap);
-      c->set_config_item(c, "lxc.cgroup.memory.memsw.limit_in_bytes",ram_cap);
-      
-      const char* disk_bw = to_string(resource_reservations.disk_bw()).c_str();
-      c->set_config_item(c, "lxc.cgroup.blkio.throttle.write_bps_device",disk_bw);
-      c->set_config_item(c, "lxc.cgroup.blkio.throttle.read_bps_device",disk_bw);
-      
-
-      boost::unique_lock<boost::shared_mutex> handler_lock(container_map_mutex_);
-      CHECK(InsertIfNotPresent(&task_containers_, task_id, c));
-
-      c->start(c, 0, NULL);
-
-      string container_task_file_subpath = "/task";
-      string container_task_file_path = "$HOME/.local/share/lxc/" + container_name +
-                                        container_task_file_subpath;
-
-      std::ifstream  src(argv[0], std::ios::binary);
-      std::ofstream  dst(container_task_file_path.c_str(),   std::ios::binary);
-      dst << src.rdbuf();
-
-      c->attach_run_wait(c, NULL, container_task_file_subpath.c_str(), &argv[0]);
-
-      cout << "test";
-
-      _exit(1);
+      _exit(ExecuteBinaryInContainer(task_id, env["FLAGS_task_data_dir"],
+        argv, env_strings, resource_reservations));
     }
     default:
       // Parent
@@ -495,6 +456,68 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
   return -1;
 }
 
+int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id, string data_dir,
+                              vector<char*> argv, vector<string> env_strings,
+                              ResourceVector resource_reservations) {
+  string container_name = GetTaskContainerName(task_id);
+
+
+  lxc_container *c = lxc_container_new(container_name.c_str(), NULL);
+  if (!c->createl(c, "ubuntu", NULL, NULL, LXC_CREATE_QUIET,
+                "-r", "trusty", "--user", "ubuntu", "--password", "ubuntu", NULL)) {
+  }
+
+  const char* ram_cap = to_string(resource_reservations.ram_cap()).c_str();
+  if (strcmp(ram_cap, "0") != 0) {
+    c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes", ram_cap);
+    c->set_config_item(c, "lxc.cgroup.memory.memsw.limit_in_bytes", ram_cap);
+  }
+  const char* disk_bw = to_string(resource_reservations.disk_bw()).c_str();
+  if (strcmp(disk_bw, "0") != 0) {
+    c->set_config_item(c, "lxc.cgroup.blkio.throttle.write_bps_device", disk_bw);
+    c->set_config_item(c, "lxc.cgroup.blkio.throttle.read_bps_device", disk_bw);
+  }
+
+  string full_task_perf_dir = boost::filesystem::canonical(FLAGS_task_perf_dir).string();
+  string full_task_lib_dir = boost::filesystem::canonical(FLAGS_task_lib_dir).string();
+  string full_task_log_dir = boost::filesystem::canonical(FLAGS_task_log_dir).string();
+  string full_data_dir = boost::filesystem::canonical(data_dir).string();
+
+  c->set_config_item(c, "lxc.mount.entry",  (full_task_perf_dir + " " + full_task_perf_dir.substr(1)
+                              + " none defaults,bind,create=dir 0 0").c_str());
+  c->set_config_item(c, "lxc.mount.entry",   (full_task_lib_dir + " " + full_task_lib_dir.substr(1)
+                              + " none defaults,bind,create=dir 0 0").c_str());
+  c->set_config_item(c, "lxc.mount.entry", (full_task_log_dir + " " + full_task_log_dir.substr(1)
+                              + " none defaults,bind,create=dir 0 0").c_str());
+  c->set_config_item(c, "lxc.mount.entry", (full_data_dir + " " + full_data_dir.substr(1)
+                              + " none defaults,bind,create=dir 0 0").c_str());
+
+  {
+    boost::unique_lock<boost::shared_mutex> handler_lock(container_map_mutex_);
+    CHECK(InsertIfNotPresent(&task_containers_, task_id, c));
+  }
+
+  c->start(c, 0, NULL);
+
+  lxc_attach_options_t attach_options = LXC_ATTACH_OPTIONS_DEFAULT;
+
+  // Change to task's working directory
+  attach_options.initial_cwd = (char*) data_dir.c_str();
+
+  int res = -1;
+  res = c->attach_run_wait(c, &attach_options, argv[0], &argv[0]);
+
+  if (!c->shutdown(c, 30)) {
+    c->stop(c)
+  }
+
+  c->destroy(c);
+
+  lxc_container_put(c);
+
+  return res != -1 ? 0 : res;
+}
+
 string LocalExecutor::PerfDataFileName(const TaskDescriptor& td) {
   string fname = FLAGS_task_perf_dir + "/" + (to_string(local_resource_id_)) +
                  "-" + to_string(td.uid()) + ".perf";
@@ -518,30 +541,12 @@ void LocalExecutor::SetUpEnvironmentForTask(
   InsertIfNotPresent(env, "PATH",
       "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
   InsertIfNotPresent(env, "FLAGS_task_id", to_string(td.uid()));
-  InsertIfNotPresent(env, "FLAGS_task_container_name", GetTaskContainerName(td.uid()));
   InsertIfNotPresent(env, "PERF_FNAME", PerfDataFileName(td));
   InsertIfNotPresent(env, "FLAGS_coordinator_uri", coordinator_uri_);
-  // TODO(josh): Check this logic.
-  string container_monitor_uri = FLAGS_container_monitor_uri.empty()
-      ? (URITools::GetHostnameFromURI(coordinator_uri_)
-            + ":" + to_string(FLAGS_container_monitor_port))
-      : FLAGS_container_monitor_uri;
-  InsertIfNotPresent(env, "FLAGS_container_monitor_uri", container_monitor_uri);
   InsertIfNotPresent(env, "FLAGS_resource_id", to_string(local_resource_id_));
   InsertIfNotPresent(env, "FLAGS_heartbeat_interval",
                      to_string(heartbeat_interval_));
   InsertIfNotPresent(env, "FLAGS_task_data_dir", data_dir);
-  if (td.inject_task_lib()) {
-    InsertIfNotPresent(env, "LD_LIBRARY_PATH", FLAGS_task_lib_dir);
-    InsertIfNotPresent(env, "LD_PRELOAD", "task_lib_inject.so");
-    // This effectively does a "basename" on the executable; the TASK_COMM
-    // environment variable is used to match the executable for against
-    // /proc/self/comm when deciding whether to inject a monitor thread.
-    string expected_comm =
-      td.binary().substr(td.binary().rfind("/") + 1,
-                         td.binary().size() - td.binary().rfind("/") - 1);
-    InsertIfNotPresent(env, "TASK_COMM", expected_comm);
-  }
   VLOG(1) << "Task's environment variables:";
   for (unordered_map<string, string>::const_iterator env_iter = env->begin();
        env_iter != env->end();

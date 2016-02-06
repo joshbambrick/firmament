@@ -57,7 +57,6 @@ class LocalExecutor : public ExecutorInterface {
                    << to_string(local_resource_id_)
                    << ">";
   }
-
  protected:
   // Unit tests
   FRIEND_TEST(LocalExecutorTest, SimpleSyncProcessExecutionTest);
@@ -94,6 +93,11 @@ class LocalExecutor : public ExecutorInterface {
                          const string& tasklog);
   bool _RunTask(TaskDescriptor* td,
                 bool firmament_binary);
+  int ExecuteBinaryInContainer(TaskID_t task_id,
+                               string data_dir,
+                               vector<char*> argv,
+                               vector<string> env_strings,
+                               ResourceVector resource_reservations);
   string PerfDataFileName(const TaskDescriptor& td);
   void ReadFromPipe(int fd);
   void SetUpEnvironmentForTask(const TaskDescriptor& td,
