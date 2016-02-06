@@ -141,8 +141,7 @@ bool KnowledgeBase::GetLatestStatsForMachine(
 const TaskPerfStatisticsSample* KnowledgeBase::GetLatestStatsForTask(
       TaskID_t id) const {
   const deque<TaskPerfStatisticsSample>* res = FindOrNull(task_map_, id);
-  CHECK_NOTNULL(res);
-  return &(res->back());
+  return !res ? NULL : &(res->back());
 }
 
 const deque<MachinePerfStatisticsSample> KnowledgeBase::GetStatsForMachine(
