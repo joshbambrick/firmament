@@ -16,11 +16,11 @@ namespace firmament {
 void StartContainerMonitor(int port);
 ResourceVector ContainerMonitorCreateResourceVector(int port,
     string container_monitor_uri, string task_container_name);
-ResourceVector GetResourceUsageVector(http::uri node_uri);
-json::value GetResourceUsageJson(http::uri node_uri);
+ResourceVector GetResourceUsageVector(http::uri node_uri, string task_container_name);
+json::value GetResourceUsageJson(http::uri node_uri, string task_container_name);
 pplx::task<json::value> HandleResourceUsageException(
       pplx::task<json::value> task);
 json::value CreateErrorJson(string msg);
-pplx::task<json::value> GetResourceUsageTask(http::uri node_uri);
+pplx::task<json::value> GetResourceUsageTask(http::uri node_uri, string task_container_name);
 
 }  // namespace firmament

@@ -20,38 +20,46 @@ using namespace http::client;
 
 namespace firmament {
 
+
 void StartContainerMonitor(int port) {
   string command = string("sudo docker run \
     --volume=/:/rootfs:ro \
     --volume=/var/run:/var/run:rw \
     --volume=/sys:/sys:ro \
     --volume=/var/lib/docker/:/var/lib/docker:ro \
-    --publish=8080:") + to_string(port) + string(" \
+    --publish=") + to_string(port) + string(":8080 \
     --detach=true \
-    --name=cadvisor \
     google/cadvisor:latest");
+
   system(command.c_str());
 }
 
 ResourceVector ContainerMonitorCreateResourceVector(int port,
     string container_monitor_uri, string task_container_name) {
   uri_builder ub(container_monitor_uri.c_str());
+
   ub.set_port(port);
-  ub.append_path(U("/api/v1/stats/"));
+  ub.append_path(U("/api/v2.0/stats"));
+
+  // cadvisor adds this prefix
+  task_container_name = "/lxc/" + task_container_name;
+
   ub.append_path(U(task_container_name.c_str()));
   http::uri node_uri = ub.to_uri();
-  return GetResourceUsageVector(node_uri);
+  return GetResourceUsageVector(node_uri, task_container_name);
 }
 
-ResourceVector GetResourceUsageVector(http::uri node_uri) {
-  json::value resource_usage = GetResourceUsageJson(node_uri);
+ResourceVector GetResourceUsageVector(http::uri node_uri, string task_container_name) {
   ResourceVector resource_vector;
-  resource_vector.set_ram_cap(resource_usage["memory"]["usage"].as_integer());
+  json::value resource_usage = GetResourceUsageJson(node_uri, task_container_name);
+  if (!resource_usage.has_field("error")) {
+    resource_vector.set_ram_cap(resource_usage["memory"]["usage"].as_integer());
+  }
   return resource_vector;
 }
 
-json::value GetResourceUsageJson(http::uri node_uri) {
-  pplx::task<json::value> t = GetResourceUsageTask(node_uri);
+json::value GetResourceUsageJson(http::uri node_uri, string task_container_name) {
+  pplx::task<json::value> t = GetResourceUsageTask(node_uri, task_container_name);
   t.wait();
   return t.get();
 }
@@ -74,20 +82,37 @@ json::value CreateErrorJson(string msg) {
   return error_json;
 }
 
-pplx::task<json::value> GetResourceUsageTask(http::uri node_uri) {
+pplx::task<json::value> GetResourceUsageTask(http::uri node_uri, string task_container_name) {
   http_client monitor_client(node_uri);
   return monitor_client.request(methods::GET).then([](http_response resp) {
-    //PrintResponse(full_uri.to_string(), apiClient.request(methods::GET, buf.str()).get());
     return resp.extract_json();
   }).then([=](json::value resources_json) {
-    if (!resources_json.has_field(U("has_diskio"))
-        || !resources_json.has_field(U("has_memory"))
-        || !resources_json.get(U("has_diskio")).as_bool()
-        || !resources_json.get(U("has_memory")).as_bool()) {
-      return CreateErrorJson("no data");
+    bool isValid = true;
+
+    json::value container_events = NULL;
+    if (resources_json.has_field(U(task_container_name))) {
+      container_events = resources_json[task_container_name];
+    } else {
+      isValid = false;
     }
 
-    return resources_json;
+    json::value latest_event = NULL;
+    if (isValid && container_events.is_array()) {
+      latest_event = container_events[0];
+    } else {
+      isValid = false;
+    }
+
+    if (isValid && (
+        !latest_event.has_field(U("has_diskio"))
+        || !latest_event.has_field(U("has_memory"))
+        || !latest_event["has_diskio"].as_bool()
+        || !latest_event["has_memory"].as_bool())) {
+      isValid = false;
+    }
+
+
+    return isValid ? latest_event : CreateErrorJson("no data");
   }).then([=](pplx::task<json::value> t) {
     return HandleResourceUsageException(t);
   });
