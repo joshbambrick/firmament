@@ -491,8 +491,9 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
                                             ResourceVector resource_reservations,
                                             string container_name) {
   lxc_container *c = lxc_container_new(container_name.c_str(), NULL);
-  if (!c->createl(c, "ubuntu", NULL, NULL, LXC_CREATE_QUIET,
-                "-r", "trusty", "--user", "ubuntu", "--password", "ubuntu", NULL)) {
+  if (!c->createl(c, "download", NULL, NULL, LXC_CREATE_QUIET,
+                                      "-d", "ubuntu", "-r", "trusty", NULL))) {
+    LOG(ERROR) << "Could not start container for task " << task_id;
   }
 
   const char* ram_cap = to_string(resource_reservations.ram_cap()).c_str();
