@@ -498,7 +498,6 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
   const char* ram_cap = to_string(resource_reservations.ram_cap()).c_str();
   if (strcmp(ram_cap, "0") != 0) {
     c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes", ram_cap);
-    c->set_config_item(c, "lxc.cgroup.memory.memsw.limit_in_bytes", ram_cap);
   }
   const char* disk_bw = to_string(resource_reservations.disk_bw()).c_str();
   if (strcmp(disk_bw, "0") != 0) {
