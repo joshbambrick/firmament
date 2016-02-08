@@ -1,26 +1,29 @@
 // The Firmament project
-// Copyright (c) 2013 Malte Schwarzkopf <malte.schwarzkopf@cl.cam.ac.uk>
+// Copyright (c) 2016 Joshua Bambrick <jpbambrick@gmail.com>
 //
 // Container monitor utils.
 
+#include "base/common.h"
 #include "base/resource_vector.pb.h"
-#include "cpprest/http_client.h"
-#include "cpprest/json.h"
 using std::string;
-using namespace web;
-using namespace http;
-using namespace json;
 
 namespace firmament {
 
-void StartContainerMonitor(int port);
-ResourceVector ContainerMonitorCreateResourceVector(int port,
-    string container_monitor_uri, string task_container_name);
-ResourceVector GetResourceUsageVector(http::uri node_uri, string task_container_name);
-json::value GetResourceUsageJson(http::uri node_uri, string task_container_name);
-pplx::task<json::value> HandleResourceUsageException(
-      pplx::task<json::value> task);
-json::value CreateErrorJson(string msg);
-pplx::task<json::value> GetResourceUsageTask(http::uri node_uri, string task_container_name);
+class ContainerMonitorUtils {
+  public:
+    static void StartContainerMonitor(int port);
+    static ResourceVector CreateResourceVector(int port,
+                                 string container_monitor_uri,
+                                 string task_container_name);
+
+  protected:
+    static ResourceVector CreateResourceVector(string json_input,
+                                               string task_container_name);
+    static size_t WriteCallback(void *contents,
+                                size_t size,
+                                size_t nmemb,
+                                void *userp);
+    static string GetHttpResponse(string url);
+};
 
 }  // namespace firmament

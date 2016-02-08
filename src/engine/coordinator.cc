@@ -1041,7 +1041,7 @@ const string Coordinator::SubmitJob(const JobDescriptor& job_descriptor) {
 }
 
 void Coordinator::CreateContainerMonitor() {
-  StartContainerMonitor(FLAGS_container_monitor_port);
+  ContainerMonitorUtils::StartContainerMonitor(FLAGS_container_monitor_port);
 }
 
 void Coordinator::Shutdown(const string& reason) {

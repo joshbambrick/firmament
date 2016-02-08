@@ -22,7 +22,6 @@
 #include "messages/task_spawn_message.pb.h"
 #include "messages/task_state_message.pb.h"
 #include "misc/utils.h"
-#include "misc/container_monitor_utils.h"
 #include "platforms/common.h"
 #include "platforms/common.pb.h"
 
@@ -57,9 +56,6 @@ TaskLib::TaskLib()
     chan_(new StreamSocketsChannel<BaseMessage>(
         StreamSocketsChannel<BaseMessage>::SS_TCP)),
     coordinator_uri_(getenv("FLAGS_coordinator_uri")),
-    container_monitor_uri_(getenv("FLAGS_container_monitor_uri")),
-    container_monitor_port_(atoi(getenv("FLAGS_container_monitor_port"))),
-    task_container_name_(getenv("FLAGS_task_container_name")),
     resource_id_(ResourceIDFromString(getenv("FLAGS_resource_id"))),
     pid_(getpid()),
     task_running_(false),
@@ -129,12 +125,6 @@ void TaskLib::Stop(bool success) {
     unlink(pid_filename.c_str());
     //exit(0);
   }
-}
-
-void TaskLib::AddTaskResourcesToHeartbeat(TaskPerfStatisticsSample* stats) {
-  ResourceVector res = ContainerMonitorCreateResourceVector(
-        container_monitor_port_, container_monitor_uri_, task_container_name_);
-  stats->mutable_resources()->CopyFrom(res);
 }
 
 void TaskLib::AddTaskStatisticsToHeartbeat(

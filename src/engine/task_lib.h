@@ -68,9 +68,6 @@ class TaskLib {
   bool exit_;
   // TODO(malte): transform this into a better representation
   string coordinator_uri_;
-  string container_monitor_uri_;
-  int container_monitor_port_;
-  string task_container_name_;
   ResourceID_t resource_id_;
   TaskID_t task_id_;
   TaskDescriptor task_descriptor_;
@@ -78,7 +75,6 @@ class TaskLib {
   void AddTaskStatisticsToHeartbeat(
       const ProcFSMonitor::ProcessStatistics_t& proc_stats,
       TaskPerfStatisticsSample* stats);
-  void AddTaskResourcesToHeartbeat(TaskPerfStatisticsSample* stats);
   void ConvertTaskArgs(int argc, char *argv[], vector<char*>* arg_vec);
   void HandleIncomingMessage(BaseMessage *bm,
                              const string& remote_endpoint);

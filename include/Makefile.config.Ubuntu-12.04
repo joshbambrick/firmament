@@ -173,7 +173,7 @@ INCLUDES = -I$(SRC_ROOT_DIR) -I$(SRC_GEN_DIR) -I$(CSRC_GEN_DIR) \
 # every binary to the whole world.
 #LIBS = -lgflags -lglog -ltcmalloc -lprofiler -lpthread -lprotobuf -lboost_system -lboost_thread -lboost_regex -lboost_date_time -lpion-common -lpion-net -llog4cpp -lhwloc
 #LIBS += $(GPERFTOOLS_LIB) -lgflags -lglog -lpthread -lprotobuf
-LIBS += -lgflags -lglog -lprotobuf -lrt -lpthread -llxc # -l:${CPPREST_LIB}
+LIBS += -lgflags -lglog -lprotobuf -lrt -lpthread -llxc -lcurl -ljansson
 #LIBS += -lgflags -lglog -lpthread -lprotobuf
 
 

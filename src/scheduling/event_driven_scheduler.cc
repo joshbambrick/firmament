@@ -714,11 +714,11 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
       TaskID_t task_id = *itv;
       const TaskPerfStatisticsSample* stats =
           knowledge_base()->GetLatestStatsForTask(task_id);
-      int usage_ram = stats->resources().ram_bw();
       TaskDescriptor* td_ptr = FindPtrOrNull(*task_map_, task_id);
       ResourceVector* reservations = td_ptr->mutable_resource_reservations();
       // Knowledge Base may not be up to date or this may be a remote resource.
-      if (reservations != NULL) {
+      if (reservations && stats) {
+        int usage_ram = stats->resources().ram_cap();
         int current_reservation_ram = reservations->ram_cap();
         int updated_reservation_ram = 0;
         if (usage_ram > current_reservation_ram) {

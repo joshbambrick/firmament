@@ -28,6 +28,7 @@ extern "C" {
 #include "base/units.h"
 #include "engine/executors/task_health_checker.h"
 #include "misc/utils.h"
+#include "misc/container_monitor_utils.h"
 #include "misc/uri_tools.h"
 #include "misc/map-util.h"
 
@@ -553,7 +554,9 @@ void LocalExecutor::CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeat
 
 TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
   boost::unique_lock<boost::shared_mutex> heartbeat_lock(task_heartbeat_sequence_numbers_map_mutex_);
+  boost::unique_lock<boost::shared_mutex> container_names_lock(task_container_names_map_mutex_);
   uint64_t* heartbeat_sequence_number_ptr = FindOrNull(task_heartbeat_sequence_numbers_, task_id);
+  string* container_name = FindOrNull(task_container_names_, task_id);
   uint64_t heartbeat_sequence_number = 0;
   if (heartbeat_sequence_number_ptr) {
     heartbeat_sequence_number = *heartbeat_sequence_number_ptr + 1;
@@ -562,6 +565,21 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
   TaskHeartbeatMessage task_heartbeat;
   task_heartbeat.set_task_id(task_id);
   task_heartbeat.set_sequence_number(heartbeat_sequence_number);
+  if (container_name) {
+    string monitor_uri = FLAGS_container_monitor_uri != "" ? FLAGS_container_monitor_uri : coordinator_uri_;
+
+    ResourceVector usage = ContainerMonitorUtils::CreateResourceVector(FLAGS_container_monitor_port, monitor_uri, *container_name);
+
+    if (usage.has_ram_cap()) {
+
+      TaskPerfStatisticsSample stats;
+      stats.set_task_id(task_id);
+      stats.set_timestamp(GetCurrentTimestamp());
+      stats.mutable_resources()->CopyFrom(usage);
+
+      task_heartbeat.mutable_stats()->CopyFrom(stats);
+    }
+  }
   InsertOrUpdate(&task_heartbeat_sequence_numbers_, task_id, heartbeat_sequence_number);
   return task_heartbeat;
 }
