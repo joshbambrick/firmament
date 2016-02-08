@@ -722,7 +722,7 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
         int current_reservation_ram = reservations->ram_cap();
         int updated_reservation_ram = 0;
         if (usage_ram > current_reservation_ram) {
-          updated_reservation_ram = (int) (current_reservation_ram
+          updated_reservation_ram = (int) (usage_ram
                                           * FLAGS_reservation_overshoot_boost);
         } else {
           int expected = (int) (current_reservation_ram *
