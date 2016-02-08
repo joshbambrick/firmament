@@ -194,6 +194,10 @@ void Coordinator::AddResource(ResourceTopologyNodeDescriptor* rtnd,
     // Figure out the machine's resource capacity.
     ResourceVector* cap = resource_desc->mutable_resource_capacity();
     machine_monitor_.GetMachineCapacity(cap);
+    machine_capacity_ = *cap;
+    ResourceVector machine_reservations;
+    scheduler_->knowledge_base()->UpdateMachineReservations(machine_uuid_,
+                                                        machine_reservations);
   }
   // Register with scheduler if this resource is schedulable
   if (resource_desc->type() == ResourceDescriptor::RESOURCE_PU) {
@@ -267,22 +271,15 @@ void Coordinator::Run() {
       stats.set_timestamp(GetCurrentTimestamp());
       stats.set_resource_id(to_string(machine_uuid_));
 
-      // Create a vector of tasks running on this machine
-      ResourceID_t machine_res_id = scheduler_->MachineResIDForResource(
-                                  ResourceIDFromString(resource_desc_.uuid()));
-      vector<TaskDescriptor*> machine_running_task_descs;
-      for(thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
-              = task_table_.get()->begin();
-          it != task_table_.get()->end(); it++) {
-        TaskDescriptor* td_ptr = it->second;
-        ResourceID_t task_machine_res_id = scheduler_->MachineResIDForResource(
-                        ResourceIDFromString(td_ptr->scheduled_to_resource()));
-        if (td_ptr->state() == TaskDescriptor::RUNNING
-            && task_machine_res_id == machine_res_id)
-          machine_running_task_descs.push_back(td_ptr);
-      }
+      machine_monitor_.CreateStatistics(&stats);
+      const ResourceVector* machine_reservations =
+          scheduler_->knowledge_base()->GetMachineReservations(machine_uuid_);
 
-      machine_monitor_.CreateStatistics(&stats, &machine_running_task_descs);
+      ResourceVector* stats_resource_reservations = stats.mutable_resource_reservations();
+      stats_resource_reservations->CopyFrom(*machine_reservations);
+      cout << "machine ram: " << machine_capacity_.ram_cap() << endl;
+      cout << "machine ram reservation: " << machine_reservations->ram_cap() << endl;
+
       // Record this sample locally
       scheduler_->knowledge_base()->AddMachineSample(stats);
       if (parent_chan_ != NULL) {

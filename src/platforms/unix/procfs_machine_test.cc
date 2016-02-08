@@ -57,8 +57,7 @@ TEST_F(ProcFSMachineTest, CreateStatistics) {
   MachinePerfStatisticsSample* stats = new MachinePerfStatisticsSample;
   // We need to wait for a bit to collect some data
   sleep(1);
-  vector<TaskDescriptor*> tds;
-  pfsm_.CreateStatistics(stats, &tds);
+  pfsm_.CreateStatistics(stats);
   VLOG(1) << stats->DebugString();
   delete stats;
   sleep(5);

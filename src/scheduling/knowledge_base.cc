@@ -138,6 +138,19 @@ bool KnowledgeBase::GetLatestStatsForMachine(
   return true;
 }
 
+const ResourceVector* KnowledgeBase::GetMachineReservations(
+    ResourceID_t res_id) {
+  return FindOrNull(machine_reservations_map_, res_id);
+}
+
+void KnowledgeBase::UpdateMachineReservations(
+    ResourceID_t res_id,
+    const ResourceVector& reservations) {
+  ResourceVector copied_reservations;
+  copied_reservations.CopyFrom(reservations);
+  InsertOrUpdate(&machine_reservations_map_, res_id, copied_reservations);
+}
+
 const TaskPerfStatisticsSample* KnowledgeBase::GetLatestStatsForTask(
       TaskID_t id) const {
   const deque<TaskPerfStatisticsSample>* res = FindOrNull(task_map_, id);

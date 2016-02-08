@@ -300,6 +300,7 @@ class Coordinator : public Node,
   // Machine statistics monitor
   ProcFSMachine machine_monitor_;
   ResourceID_t machine_uuid_;
+  ResourceVector machine_capacity_;
   // Local machine's host name
   const string hostname_;
 };

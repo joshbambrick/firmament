@@ -718,19 +718,30 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
       ResourceVector* reservations = td_ptr->mutable_resource_reservations();
       // Knowledge Base may not be up to date or this may be a remote resource.
       if (reservations && stats) {
-        int usage_ram = stats->resources().ram_cap();
-        int current_reservation_ram = reservations->ram_cap();
-        int updated_reservation_ram = 0;
+        uint32_t usage_ram = stats->resources().ram_cap();
+        uint32_t current_reservation_ram = reservations->ram_cap();
+        uint32_t updated_reservation_ram = 0;
         if (usage_ram > current_reservation_ram) {
-          updated_reservation_ram = (int) (usage_ram
+          updated_reservation_ram = (uint32_t) (usage_ram
                                           * FLAGS_reservation_overshoot_boost);
         } else {
-          int expected = (int) (current_reservation_ram *
+          uint32_t expected = (uint32_t) (current_reservation_ram *
                                             FLAGS_reservation_increment);
-          int safety = (int) floor(FLAGS_reservation_safety_margin * usage_ram);
+          uint32_t safety = (uint32_t) floor(FLAGS_reservation_safety_margin * usage_ram);
           updated_reservation_ram = max(expected, safety);
         }
         reservations->set_ram_cap(updated_reservation_ram);
+
+        ResourceID_t res_id = MachineResIDForResource(itm->first);
+        const ResourceVector* old_machine_reservations =
+                              knowledge_base()->GetMachineReservations(res_id);
+        CHECK_NOTNULL(old_machine_reservations);
+        ResourceVector new_machine_reservations;
+        uint32_t new_machine_ram_reservation = updated_reservation_ram +
+                old_machine_reservations->ram_cap() - current_reservation_ram;
+        new_machine_reservations.set_ram_cap(new_machine_ram_reservation);
+        knowledge_base()->UpdateMachineReservations(res_id,
+                                                    new_machine_reservations);
       }
     }
   }

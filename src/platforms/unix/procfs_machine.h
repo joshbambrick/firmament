@@ -50,8 +50,7 @@ class ProcFSMachine {
  public:
   ProcFSMachine();
   const MachinePerfStatisticsSample* CreateStatistics(
-    MachinePerfStatisticsSample* stats,
-    vector<TaskDescriptor*>* machine_running_task_descs);
+    MachinePerfStatisticsSample* stats);
   void GetMachineCapacity(ResourceVector* cap);
 
  private:

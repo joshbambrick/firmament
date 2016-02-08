@@ -40,6 +40,10 @@ class KnowledgeBase {
   void DumpMachineStats(const ResourceID_t& res_id) const;
   bool GetLatestStatsForMachine(ResourceID_t id,
                                 MachinePerfStatisticsSample* sample);
+  const ResourceVector* GetMachineReservations(ResourceID_t res_id);
+  void UpdateMachineReservations(ResourceID_t res_id,
+                                 const ResourceVector& reservations);
+
   const deque<MachinePerfStatisticsSample> GetStatsForMachine(
       ResourceID_t id);
   const deque<TaskPerfStatisticsSample>* GetStatsForTask(
@@ -61,6 +65,8 @@ class KnowledgeBase {
   // task, i.e. it mixes samples from all phases
   unordered_map<TaskID_t, deque<TaskPerfStatisticsSample> > task_map_;
   unordered_map<TaskID_t, deque<TaskFinalReport> > task_exec_reports_;
+  unordered_map<ResourceID_t, ResourceVector,
+                    boost::hash<boost::uuids::uuid>> machine_reservations_map_;
   boost::upgrade_mutex kb_lock_;
 
  private:
