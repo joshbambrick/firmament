@@ -102,6 +102,10 @@ class EventDrivenScheduler : public SchedulerInterface {
   void RegisterSimulatedResource(ResourceID_t res_id);
   const set<TaskID_t>& RunnableTasksForJob(JobDescriptor* job_desc);
   bool UnbindTaskFromResource(TaskDescriptor* td_ptr, ResourceID_t res_id);
+  void ClearTaskResourceReservations(TaskID_t task_id);
+  void UpdateMachineReservations(ResourceID_t res_id,
+                                 const ResourceVector* old_reservations,
+                                 const ResourceVector* new_reservations);
 
   // Cached sets of runnable and blocked tasks; these are updated on each
   // execution of LazyGraphReduction. Note that this set includes tasks from all

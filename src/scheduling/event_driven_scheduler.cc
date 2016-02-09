@@ -177,6 +177,9 @@ void EventDrivenScheduler::ExecuteTask(TaskDescriptor* td_ptr,
   // Initialize resource reservations
   td_ptr->mutable_resource_reservations()->CopyFrom(td_ptr->resource_request());
   ResourceID_t res_id = ResourceIDFromString(rd_ptr->uuid());
+  ResourceVector empty_resource_reservations;
+  UpdateMachineReservations(res_id, &empty_resource_reservations,
+                                          &(td_ptr->resource_reservations()));
   // Remove the task from the runnable set
   CHECK_EQ(runnable_tasks_.erase(task_id), 1)
     << "Failed to remove task " << task_id << " from runnable set!";
@@ -253,6 +256,7 @@ void EventDrivenScheduler::HandleReferenceStateChange(
 void EventDrivenScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
                                                 TaskFinalReport* report) {
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+  ClearTaskResourceReservations(td_ptr->uid());
   // Find resource for task
   ResourceID_t* res_id_ptr = BoundResourceForTask(td_ptr->uid());
   CHECK_NOTNULL(res_id_ptr);
@@ -295,6 +299,7 @@ void EventDrivenScheduler::HandleTaskDelegationFailure(
 void EventDrivenScheduler::HandleTaskEviction(TaskDescriptor* td_ptr,
                                               ResourceDescriptor* rd_ptr) {
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+  ClearTaskResourceReservations(td_ptr->uid());
   ResourceID_t res_id = ResourceIDFromString(rd_ptr->uuid());
   VLOG(1) << "Handling completion of task " << td_ptr->uid()
           << ", freeing resource " << res_id;
@@ -312,6 +317,7 @@ void EventDrivenScheduler::HandleTaskEviction(TaskDescriptor* td_ptr,
 
 void EventDrivenScheduler::HandleTaskFailure(TaskDescriptor* td_ptr) {
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+  ClearTaskResourceReservations(td_ptr->uid());
   // Find resource for task
   ResourceID_t* res_id_ptr = FindOrNull(task_bindings_, td_ptr->uid());
   CHECK_NOTNULL(res_id_ptr);
@@ -423,6 +429,8 @@ void EventDrivenScheduler::KillRunningTask(
 
   // Kill the task on the executor
   exec->KillTask(td_ptr);
+
+  ClearTaskResourceReservations(task_id);
 }
 
 // Implementation of lazy graph reduction algorithm, as per p58, fig. 3.5 in
@@ -716,35 +724,55 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
           knowledge_base()->GetLatestStatsForTask(task_id);
       TaskDescriptor* td_ptr = FindPtrOrNull(*task_map_, task_id);
       ResourceVector* reservations = td_ptr->mutable_resource_reservations();
+      ResourceVector old_reservations;
+      old_reservations.CopyFrom(td_ptr->resource_reservations());
       // Knowledge Base may not be up to date or this may be a remote resource.
       if (reservations && stats) {
         uint32_t usage_ram = stats->resources().ram_cap();
         uint32_t current_reservation_ram = reservations->ram_cap();
         uint32_t updated_reservation_ram = 0;
+        uint32_t safety = (uint32_t) floor(FLAGS_reservation_safety_margin * usage_ram);
         if (usage_ram > current_reservation_ram) {
-          updated_reservation_ram = (uint32_t) (usage_ram
-                                          * FLAGS_reservation_overshoot_boost);
+          updated_reservation_ram = usage_ram
+                                          * FLAGS_reservation_overshoot_boost;
         } else {
-          uint32_t expected = (uint32_t) (current_reservation_ram *
-                                            FLAGS_reservation_increment);
-          uint32_t safety = (uint32_t) floor(FLAGS_reservation_safety_margin * usage_ram);
-          updated_reservation_ram = max(expected, safety);
+          updated_reservation_ram = current_reservation_ram *
+                                                  FLAGS_reservation_increment;
         }
-        reservations->set_ram_cap(updated_reservation_ram);
-
-        ResourceID_t res_id = MachineResIDForResource(itm->first);
-        const ResourceVector* old_machine_reservations =
-                              knowledge_base()->GetMachineReservations(res_id);
-        CHECK_NOTNULL(old_machine_reservations);
-        ResourceVector new_machine_reservations;
-        uint32_t new_machine_ram_reservation = updated_reservation_ram +
-                old_machine_reservations->ram_cap() - current_reservation_ram;
-        new_machine_reservations.set_ram_cap(new_machine_ram_reservation);
-        knowledge_base()->UpdateMachineReservations(res_id,
-                                                    new_machine_reservations);
+        reservations->set_ram_cap(max(updated_reservation_ram, safety));
+        UpdateMachineReservations(itm->first, &old_reservations, reservations);
       }
     }
   }
+}
+
+void EventDrivenScheduler::ClearTaskResourceReservations(TaskID_t task_id) {
+  TaskDescriptor* td = FindPtrOrNull(*task_map_, task_id);
+  CHECK_NOTNULL(td);
+  ResourceID_t* res_id_ptr = BoundResourceForTask(task_id);
+  CHECK_NOTNULL(res_id_ptr);
+  ResourceVector empty_resource_reservations;
+  UpdateMachineReservations(*res_id_ptr, &(td->resource_reservations()),
+                                                &empty_resource_reservations);
+  td->mutable_resource_reservations()->CopyFrom(empty_resource_reservations);
+}
+
+void EventDrivenScheduler::UpdateMachineReservations(
+    ResourceID_t res_id,
+    const ResourceVector* old_reservations,
+    const ResourceVector* new_reservations) {
+  uint32_t old_reservation_ram = old_reservations->ram_cap();
+  uint32_t new_reservation_ram = new_reservations->ram_cap();
+  ResourceID_t machine_res_id = MachineResIDForResource(res_id);
+  const ResourceVector* old_machine_reservations =
+                        knowledge_base()->GetMachineReservations(machine_res_id);
+  CHECK_NOTNULL(old_machine_reservations);
+  ResourceVector new_machine_reservations;
+  uint32_t new_machine_ram_reservation = new_reservation_ram +
+          old_machine_reservations->ram_cap() - old_reservation_ram;
+  new_machine_reservations.set_ram_cap(new_machine_ram_reservation);
+  knowledge_base()->UpdateMachineReservations(machine_res_id,
+                                              new_machine_reservations);
 }
 
 ResourceID_t EventDrivenScheduler::MachineResIDForResource(
