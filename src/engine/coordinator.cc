@@ -53,6 +53,8 @@ DEFINE_int32(http_ui_port, 8080,
 #endif
 DEFINE_uint64(heartbeat_interval, 1000000,
               "Heartbeat interval in microseconds.");
+DEFINE_uint64(monitor_resource_usage_interval, 1000000,
+              "Monitor resources interval in microseconds.");
 DEFINE_bool(populate_knowledge_base_from_file, false,
             "True if we should load the knowledge base from file.");
 
@@ -122,6 +124,9 @@ Coordinator::Coordinator(PlatformID platform_id)
 
   pull_task_messages_thread_
     = new boost::thread(boost::bind(&Coordinator::PullTaskMessages, this));
+
+  resource_monitor_thread_
+    = new boost::thread(boost::bind(&Coordinator::MonitorResourceUsage, this));
 
   if (FLAGS_populate_knowledge_base_from_file) {
     scheduler_->knowledge_base()->LoadKnowledgeBaseFromFile();
@@ -277,8 +282,6 @@ void Coordinator::Run() {
 
       ResourceVector* stats_resource_reservations = stats.mutable_resource_reservations();
       stats_resource_reservations->CopyFrom(*machine_reservations);
-      cout << "machine ram: " << machine_capacity_.ram_cap() << endl;
-      cout << "machine ram reservation: " << machine_reservations->ram_cap() << endl;
 
       // Record this sample locally
       scheduler_->knowledge_base()->AddMachineSample(stats);
@@ -327,6 +330,57 @@ bool Coordinator::HasJobCompleted(const JobDescriptor& jd) {
   }
   LOG(INFO) << "Job " << jd.uuid() << " has completed.";
   return true;
+}
+
+void Coordinator::MonitorResourceUsage() {
+  while (true) {
+    usleep(FLAGS_monitor_resource_usage_interval);
+    const ResourceVector* machine_reservations =
+          scheduler_->knowledge_base()->GetMachineReservations(machine_uuid_);
+
+    cout << "machine capacity: " << machine_capacity_.ram_cap() << endl;
+    cout << "machine reservations: " << machine_reservations->ram_cap() << endl;
+    uint32_t resource_overload = machine_reservations->ram_cap() - machine_capacity_.ram_cap();
+    if (resource_overload > 0) {
+      FreeResources(resource_overload);
+    }
+  }
+}
+
+void Coordinator::FreeResources(uint32_t ram_to_free) {
+  auto comp = [](TaskDescriptor* a, TaskDescriptor* b) {
+    if (a->priority() != b->priority())
+      return a->priority() > b->priority() ? a : b;
+    if (!a->has_resource_reservations() || !b->has_resource_reservations())
+      return a->has_resource_reservations() ? a : b;
+    uint32_t a_ram = a->resource_reservations().ram_cap();
+    uint32_t b_ram = b->resource_reservations().ram_cap();
+    return a_ram > b_ram ? a : b;
+  };
+
+  priority_queue<TaskDescriptor*, vector<TaskDescriptor*>, decltype(comp)>
+                                              machine_running_task_descs(comp);
+  for(thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
+          = task_table_->begin();
+      it != task_table_->end(); it++) {
+    TaskDescriptor* td_ptr = it->second;
+    ResourceID_t task_machine_res_id = scheduler_->MachineResIDForResource(
+                    ResourceIDFromString(td_ptr->scheduled_to_resource()));
+    if (td_ptr->state() == TaskDescriptor::RUNNING
+        && task_machine_res_id == machine_uuid_)
+      machine_running_task_descs.push(td_ptr);
+  }
+
+
+  uint32_t ram_freed = 0;
+  while (machine_running_task_descs.size() > 0 && ram_freed < ram_to_free) {
+    TaskDescriptor* lowest_task_desc = machine_running_task_descs.top();
+    machine_running_task_descs.pop();
+    scheduler_->KillRunningTask(lowest_task_desc->uid(),
+                                          TaskKillMessage::RESOURCE_EXCEEDED);
+    ram_freed += lowest_task_desc->resource_reservations().ram_cap();
+    // TODO(Josh): Reschedule the task again
+  }
 }
 
 void Coordinator::PullTaskMessages() {
