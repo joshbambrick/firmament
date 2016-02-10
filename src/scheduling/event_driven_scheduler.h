@@ -62,6 +62,7 @@ class EventDrivenScheduler : public SchedulerInterface {
                                      TaskDescriptor* td_ptr);
   virtual void KillRunningTask(TaskID_t task_id,
                                TaskKillMessage::TaskKillReason reason);
+  virtual void RescheduleTask(TaskDescriptor* td_ptr);
   bool PlaceDelegatedTask(TaskDescriptor* td, ResourceID_t target_resource);
   virtual void RegisterResource(ResourceID_t res_id,
                                 bool local,

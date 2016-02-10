@@ -175,6 +175,12 @@ class SchedulerInterface : public PrintableInterface {
                                TaskKillMessage::TaskKillReason reason) = 0;
 
   /**
+   * Re-attempts to schedule a task (e.g. after killing or delegation failure).
+   * @param td_ptr the task descriptor of the task to reschedule
+   */
+  virtual void RescheduleTask(TaskDescriptor* td_ptr) = 0;
+
+  /**
    * Places a task delegated from a superior coordinator to a resource managed
    * by this scheduler.
    * @param td_ptr the task descriptor of the delegated task

@@ -140,6 +140,26 @@ void LocalExecutor::CleanUpCompletedTask(const TaskDescriptor& td) {
   LOG(INFO) << "kill(2) for task " << td.uid() << " returned " << ret;
   task_pids_.erase(td.uid());
   task_running_.erase(td.uid());
+  ClearCompletedTaskFinalizeMessages(td.uid(), true);
+}
+
+void LocalExecutor::ClearCompletedTaskFinalizeMessages(
+      TaskID_t task_id,
+      bool called_from_cleared_up) {
+  boost::unique_lock<boost::shared_mutex> finalized_lock(task_finalize_message_map_mutex_);
+  boost::unique_lock<boost::shared_mutex> cleared_lock(cleared_up_map_mutex_);
+  bool* map_cleared_up = FindOrNull(cleared_up_tasks_, task_id);
+  bool* message_sent = FindOrNull(task_finalize_messages_sent_, task_id);
+
+  if (called_from_cleared_up || (map_cleared_up && *map_cleared_up)) {
+    if (message_sent && *message_sent) {
+      cleared_up_tasks_.erase(task_id);
+      task_finalize_messages_sent_.erase(task_id);
+      task_finalize_messages_.erase(task_id);
+    } else {
+      InsertIfNotPresent(&cleared_up_tasks_, task_id, true);
+    }
+  }
 }
 
 
@@ -461,7 +481,10 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
       }
       {
         boost::unique_lock<boost::shared_mutex> running_lock(task_running_map_mutex_);
-        CHECK(!InsertOrUpdate(&task_running_, task_id, false));
+        // Update value (if not already erased)
+        if (FindOrNull(task_running_, task_id)) {
+          CHECK(!InsertOrUpdate(&task_running_, task_id, false));
+        }
       }
 
       if (WIFEXITED(status)) {
@@ -505,6 +528,7 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
     c->set_config_item(c, "lxc.cgroup.blkio.throttle.write_bps_device", disk_bw);
     c->set_config_item(c, "lxc.cgroup.blkio.throttle.read_bps_device", disk_bw);
   }
+
 
   string full_task_perf_dir = boost::filesystem::canonical(FLAGS_task_perf_dir).string();
   string full_task_lib_dir = boost::filesystem::canonical(FLAGS_task_lib_dir).string();
@@ -585,20 +609,29 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
 }
 
 void LocalExecutor::CreateTaskStateChanges(vector<TaskStateMessage>* state_messages) {
-  boost::shared_lock<boost::shared_mutex> handler_lock(handler_map_mutex_);
-  boost::unique_lock<boost::shared_mutex> messages_lock(task_finalize_message_map_mutex_);
+  set<TaskID_t> sent_tasks;
+  {
+    boost::shared_lock<boost::shared_mutex> handler_lock(handler_map_mutex_);
+    boost::unique_lock<boost::shared_mutex> messages_lock(task_finalize_message_map_mutex_);
 
-  for (unordered_map<TaskID_t, boost::thread*>::const_iterator
-       it = task_handler_threads_.begin();
-       it != task_handler_threads_.end();
+    for (unordered_map<TaskID_t, TaskStateMessage>::const_iterator
+         it = task_finalize_messages_.begin();
+         it != task_finalize_messages_.end();
+         ++it) {
+        bool* state_message_sent = FindOrNull(task_finalize_messages_sent_, it->first);
+
+        if (!state_message_sent || !*state_message_sent) {
+          state_messages->push_back(it->second);
+          InsertOrUpdate(&task_finalize_messages_sent_, it->first, true);
+          sent_tasks.insert(it->first);
+        }
+    }
+  }
+  for (set<TaskID_t>::const_iterator
+       it = sent_tasks.begin();
+       it != sent_tasks.end();
        ++it) {
-      TaskStateMessage* state_message = FindOrNull(task_finalize_messages_, it->first);
-      bool* state_message_sent = FindOrNull(task_finalize_messages_sent_, it->first);
-
-      if (state_message && (!state_message_sent || !*state_message_sent)) {
-        state_messages->push_back(*state_message);
-        InsertOrUpdate(&task_finalize_messages_sent_, it->first, true);
-      }
+    ClearCompletedTaskFinalizeMessages(*it, false);
   }
 }
 

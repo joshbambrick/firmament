@@ -281,6 +281,8 @@ class Coordinator : public Node,
   // A map of all tasks that the coordinator currently knows about.
   // TODO(malte): Think about GC'ing this.
   shared_ptr<TaskMap_t> task_table_;
+  // A set of the tasks to reschedule, once they complete.
+  shared_ptr<set<TaskDescriptor*>> killed_tasks_to_reschedule_;
   // The health monitor periodically checks on the liveness of subordinate
   // coordinators and running tasks.
   HealthMonitor health_monitor_;

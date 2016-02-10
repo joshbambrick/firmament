@@ -75,6 +75,8 @@ class LocalExecutor : public ExecutorInterface {
                                        vector<char*>* argv);
   char* AddDebuggingToCommandLine(vector<char*>* argv);
   void CleanUpCompletedTask(const TaskDescriptor& td);
+  void ClearCompletedTaskFinalizeMessages(TaskID_t task_id,
+                                          bool called_from_cleared_up);
   void CreateDirectories();
   void GetPerfDataFromLine(TaskFinalReport* report,
                            const string& line);
@@ -129,6 +131,7 @@ class LocalExecutor : public ExecutorInterface {
   uint64_t heartbeat_interval_;
   boost::mutex exec_mutex_;
   boost::shared_mutex task_running_map_mutex_;
+  boost::shared_mutex cleared_up_map_mutex_;
   boost::shared_mutex handler_map_mutex_;
   boost::shared_mutex pid_map_mutex_;
   boost::shared_mutex task_finalize_message_map_mutex_;
@@ -141,6 +144,7 @@ class LocalExecutor : public ExecutorInterface {
   unordered_map<TaskID_t, TaskStateMessage> task_finalize_messages_;
   unordered_map<TaskID_t, bool> task_finalize_messages_sent_;
   unordered_map<TaskID_t, bool> task_running_;
+  unordered_map<TaskID_t, bool> cleared_up_tasks_;
   unordered_map<TaskID_t, string> task_container_names_;
   unordered_map<TaskID_t, uint64_t> task_heartbeat_sequence_numbers_;
 };

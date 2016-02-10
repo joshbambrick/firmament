@@ -68,6 +68,7 @@ Coordinator::Coordinator(PlatformID platform_id)
     local_resource_topology_(new ResourceTopologyNodeDescriptor),
     job_table_(new JobMap_t),
     task_table_(new TaskMap_t),
+    killed_tasks_to_reschedule_(new set<TaskDescriptor*>),
     topology_manager_(new TopologyManager()),
     object_store_(new store::SimpleObjectStore(uuid_)),
     parent_chan_(NULL),
@@ -340,9 +341,11 @@ void Coordinator::MonitorResourceUsage() {
 
     cout << "machine capacity: " << machine_capacity_.ram_cap() << endl;
     cout << "machine reservations: " << machine_reservations->ram_cap() << endl;
-    uint32_t resource_overload = machine_reservations->ram_cap() - machine_capacity_.ram_cap();
-    if (resource_overload > 0) {
-      FreeResources(resource_overload);
+    uint32_t machine_reservation = machine_reservations->ram_cap();
+    uint32_t machine_capacity = machine_capacity_.ram_cap();;
+
+    if (machine_reservation > machine_capacity) {
+      FreeResources(machine_reservation - machine_capacity);
     }
   }
 }
@@ -350,12 +353,13 @@ void Coordinator::MonitorResourceUsage() {
 void Coordinator::FreeResources(uint32_t ram_to_free) {
   auto comp = [](TaskDescriptor* a, TaskDescriptor* b) {
     if (a->priority() != b->priority())
-      return a->priority() > b->priority() ? a : b;
-    if (!a->has_resource_reservations() || !b->has_resource_reservations())
-      return a->has_resource_reservations() ? a : b;
+      return a->priority() > b->priority() ? true : false;
+    if (!a->has_resource_reservations() || !b->has_resource_reservations()) {
+      return !a->has_resource_reservations() ? true : false;
+    }
     uint32_t a_ram = a->resource_reservations().ram_cap();
     uint32_t b_ram = b->resource_reservations().ram_cap();
-    return a_ram > b_ram ? a : b;
+    return a_ram < b_ram ? true : false;
   };
 
   priority_queue<TaskDescriptor*, vector<TaskDescriptor*>, decltype(comp)>
@@ -373,13 +377,14 @@ void Coordinator::FreeResources(uint32_t ram_to_free) {
 
 
   uint32_t ram_freed = 0;
+
   while (machine_running_task_descs.size() > 0 && ram_freed < ram_to_free) {
     TaskDescriptor* lowest_task_desc = machine_running_task_descs.top();
     machine_running_task_descs.pop();
     scheduler_->KillRunningTask(lowest_task_desc->uid(),
                                           TaskKillMessage::RESOURCE_EXCEEDED);
     ram_freed += lowest_task_desc->resource_reservations().ram_cap();
-    // TODO(Josh): Reschedule the task again
+    killed_tasks_to_reschedule_->insert(lowest_task_desc);
   }
 }
 
@@ -780,6 +785,7 @@ void Coordinator::HandleTaskSpawn(const TaskSpawnMessage& msg) {
 
 void Coordinator::HandleTaskStateChange(
     const TaskStateMessage& msg) {
+
   LOG(INFO) << "Task " << msg.id() << " now in state "
             << ENUM_TO_STRING(TaskDescriptor::TaskState, msg.new_state())
             << ".";
@@ -837,6 +843,14 @@ void Coordinator::HandleTaskStateChange(
 
 void Coordinator::HandleTaskCompletion(const TaskStateMessage& msg,
                                        TaskDescriptor* td_ptr) {
+  if (killed_tasks_to_reschedule_->find(td_ptr) != killed_tasks_to_reschedule_->end()) {
+    killed_tasks_to_reschedule_->erase(td_ptr);
+    if (msg.new_state() != TaskDescriptor::COMPLETED) {
+      scheduler_->RescheduleTask(td_ptr);
+      return;
+    }
+  }
+
   TaskFinalReport report(msg.report());
   // Report will be filled in if the task is local (currently)
   scheduler_->HandleTaskCompletion(td_ptr, &report);
