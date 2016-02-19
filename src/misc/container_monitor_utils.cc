@@ -10,6 +10,7 @@
 #include <curl/curl.h>
 #include "misc/container_monitor_utils.h"
 #include "base/common.h"
+#include "base/units.h"
 
 using namespace std;
 
@@ -73,7 +74,13 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(string json_input, st
     throw parse_fail_message;
   }
 
-  json_t* latest_event = json_array_get(container_events, 0);
+
+  uint64_t events = json_array_size(container_events);
+  if (events == 0) {
+    throw parse_fail_message;
+  }
+
+  json_t* latest_event = json_array_get(container_events, events - 1);
   if (!json_is_object(latest_event)) {
     throw parse_fail_message;
   }
@@ -96,8 +103,10 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(string json_input, st
   }
 
   
-  int memory_usage_value = json_integer_value(memory_usage);
-  resource_vector.set_ram_cap(memory_usage_value);
+  int memory_usage_value = json_integer_value(memory_usage) / BYTES_TO_MB;
+  if (memory_usage_value != 0) {
+    resource_vector.set_ram_cap(memory_usage_value);
+  }
   return resource_vector;
 }
 

@@ -204,6 +204,7 @@ void Coordinator::AddResource(ResourceTopologyNodeDescriptor* rtnd,
     ResourceVector machine_reservations;
     scheduler_->knowledge_base()->UpdateMachineReservations(machine_uuid_,
                                                         machine_reservations);
+    scheduler_->SetMachineUuid(machine_uuid_);
   }
   // Register with scheduler if this resource is schedulable
   if (resource_desc->type() == ResourceDescriptor::RESOURCE_PU) {
@@ -263,6 +264,8 @@ void Coordinator::Run() {
 
   uint64_t cur_time = 0;
   uint64_t last_heartbeat_time = 0;
+
+
   // Main loop
   while (!exit_) {
     // Wait for events (i.e. messages from workers.
@@ -281,11 +284,15 @@ void Coordinator::Run() {
       const ResourceVector* machine_reservations =
           scheduler_->knowledge_base()->GetMachineReservations(machine_uuid_);
 
-      ResourceVector* stats_resource_reservations = stats.mutable_resource_reservations();
-      stats_resource_reservations->CopyFrom(*machine_reservations);
+      if (machine_reservations) {
+        ResourceVector* stats_resource_reservations = stats.mutable_resource_reservations();
+        stats_resource_reservations->CopyFrom(*machine_reservations);
+      }
 
       // Record this sample locally
       scheduler_->knowledge_base()->AddMachineSample(stats);
+
+
       if (parent_chan_ != NULL) {
         SendHeartbeatToParent(stats);
       }
@@ -339,31 +346,31 @@ void Coordinator::MonitorResourceUsage() {
     const ResourceVector* machine_reservations =
           scheduler_->knowledge_base()->GetMachineReservations(machine_uuid_);
 
-    cout << "machine capacity: " << machine_capacity_.ram_cap() << endl;
-    cout << "machine reservations: " << machine_reservations->ram_cap() << endl;
-    uint32_t machine_reservation = machine_reservations->ram_cap();
-    uint32_t machine_capacity = machine_capacity_.ram_cap();;
+    if (machine_reservations) {
+      uint64_t machine_reservation = machine_reservations->ram_cap();
+      uint64_t machine_capacity = 200; machine_capacity_.ram_cap();
 
-    if (machine_reservation > machine_capacity) {
-      FreeResources(machine_reservation - machine_capacity);
+      if (machine_reservation > machine_capacity) {
+        FreeResources(machine_reservation - machine_capacity);
+      }
     }
   }
 }
 
-void Coordinator::FreeResources(uint32_t ram_to_free) {
+void Coordinator::FreeResources(uint64_t ram_to_free) {
   auto comp = [](TaskDescriptor* a, TaskDescriptor* b) {
     if (a->priority() != b->priority())
       return a->priority() > b->priority() ? true : false;
     if (!a->has_resource_reservations() || !b->has_resource_reservations()) {
       return !a->has_resource_reservations() ? true : false;
     }
-    uint32_t a_ram = a->resource_reservations().ram_cap();
-    uint32_t b_ram = b->resource_reservations().ram_cap();
+    uint64_t a_ram = a->resource_reservations().ram_cap();
+    uint64_t b_ram = b->resource_reservations().ram_cap();
     return a_ram < b_ram ? true : false;
   };
 
   priority_queue<TaskDescriptor*, vector<TaskDescriptor*>, decltype(comp)>
-                                              machine_running_task_descs(comp);
+      machine_running_task_descs(comp);
   for(thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
           = task_table_->begin();
       it != task_table_->end(); it++) {
@@ -375,15 +382,14 @@ void Coordinator::FreeResources(uint32_t ram_to_free) {
       machine_running_task_descs.push(td_ptr);
   }
 
-
-  uint32_t ram_freed = 0;
-
+  uint64_t ram_freed = 0;
   while (machine_running_task_descs.size() > 0 && ram_freed < ram_to_free) {
     TaskDescriptor* lowest_task_desc = machine_running_task_descs.top();
     machine_running_task_descs.pop();
     scheduler_->KillRunningTask(lowest_task_desc->uid(),
                                           TaskKillMessage::RESOURCE_EXCEEDED);
     ram_freed += lowest_task_desc->resource_reservations().ram_cap();
+
     killed_tasks_to_reschedule_->insert(lowest_task_desc);
   }
 }
@@ -552,6 +558,11 @@ void Coordinator::HandleHeartbeat(const HeartbeatMessage& msg) {
       rsp->set_last_heartbeat(GetCurrentTimestamp());
       // Record resource statistics sample
       scheduler_->knowledge_base()->AddMachineSample(msg.load());
+      if (msg.has_load() && msg.load().has_resource_reservations()) {
+        scheduler_->knowledge_base()->UpdateMachineReservations(
+            ResourceIDFromString(msg.load().resource_id()),
+            msg.load().resource_reservations());
+      }
   }
 }
 
@@ -854,6 +865,7 @@ void Coordinator::HandleTaskCompletion(const TaskStateMessage& msg,
   TaskFinalReport report(msg.report());
   // Report will be filled in if the task is local (currently)
   scheduler_->HandleTaskCompletion(td_ptr, &report);
+
   // First check if this is a delegated task, and forward the message if so
   if (td_ptr->has_delegated_from()) {
     BaseMessage bm;
@@ -1053,8 +1065,6 @@ const string Coordinator::SubmitJob(const JobDescriptor& job_descriptor) {
   // inputs/outputs somehow, maybe.
   JobID_t new_job_id = GenerateJobID();
 
-  cout << "submit job " << new_job_id;
-
   LOG(INFO) << "NEW JOB: " << new_job_id;
   VLOG(2) << "Details:\n" << job_descriptor.DebugString();
   // Clone the submitted JD and add job to local job table
@@ -1095,7 +1105,6 @@ const string Coordinator::SubmitJob(const JobDescriptor& job_descriptor) {
         << ", which we just added!";
   }
 
-  cout << "ask scheduler";
   // Kick off the scheduler for this job.
   uint64_t num_scheduled =
     scheduler_->ScheduleJob(FindOrNull(*job_table_, new_job_id), NULL);

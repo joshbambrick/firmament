@@ -134,7 +134,6 @@ void CoordinatorHTTPUI::HandleCollectlRawURI(
 
 void CoordinatorHTTPUI::HandleJobSubmitURI(http::request_ptr& http_request,  // NOLINT
                                            tcp::connection_ptr& tcp_conn) {  // NOLINT
-  cout << "HANDLE URI";
   LogRequest(http_request);
   // Check if we have a JobDescriptor as part of the POST parameters
   string job_descriptor_param = http_request->get_query("test");

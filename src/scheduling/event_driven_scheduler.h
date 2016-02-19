@@ -80,6 +80,8 @@ class EventDrivenScheduler : public SchedulerInterface {
   vector<TaskHeartbeatMessage> CreateTaskHeartbeats();
   vector<TaskStateMessage> CreateTaskStateChanges();
 
+  void SetMachineUuid(ResourceID_t machine_uuid);
+
  protected:
   FRIEND_TEST(SimpleSchedulerTest, FindRunnableTasksForJob);
   FRIEND_TEST(SimpleSchedulerTest, FindRunnableTasksForComplexJob);

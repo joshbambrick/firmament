@@ -77,6 +77,11 @@ FlowScheduler::FlowScheduler(
                                       task_map, leaf_res_ids_, knowledge_base_);
       VLOG(1) << "Using the coco cost model";
       break;
+    case CostModelType::COST_MODEL_COCO_RESERVATIONS:
+      cost_model_ = new CocoReservationsCostModel(resource_map, *resource_topology,
+                                      task_map, leaf_res_ids_, knowledge_base_);
+      VLOG(1) << "Using the coco reservations cost model";
+      break;
     case CostModelType::COST_MODEL_SJF:
       cost_model_ = new SJFCostModel(task_map, leaf_res_ids_, knowledge_base_);
       VLOG(1) << "Using the SJF cost model";
@@ -142,14 +147,11 @@ uint64_t FlowScheduler::ApplySchedulingDeltas(
       // We should not get any NOOP deltas as they get filtered before.
       continue;
     } else if (delta->type() == SchedulingDelta::PLACE) {
-      cout << "TASK Placement";
       HandleTaskPlacement(td_ptr, rs->mutable_descriptor());
       num_scheduled++;
     } else if (delta->type() == SchedulingDelta::PREEMPT) {
-      cout << "TASK Eviction";
       HandleTaskEviction(td_ptr, rs->mutable_descriptor());
     } else if (delta->type() == SchedulingDelta::MIGRATE) {
-      cout << "TASK Migration";
       HandleTaskMigration(td_ptr, rs->mutable_descriptor());
     } else {
       LOG(FATAL) << "Unhandled scheduling delta case";
@@ -300,7 +302,6 @@ uint64_t FlowScheduler::ScheduleAllJobs(SchedulerStats* scheduler_stats) {
 
 uint64_t FlowScheduler::ScheduleJob(JobDescriptor* jd_ptr,
                                     SchedulerStats* scheduler_stats) {
-  cout << "start scheduler";
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
   LOG(INFO) << "START SCHEDULING (via " << jd_ptr->uuid() << ")";
   LOG(WARNING) << "This way of scheduling a job is slow in the flow scheduler! "
@@ -363,11 +364,11 @@ void FlowScheduler::RegisterResource(ResourceID_t res_id,
 uint64_t FlowScheduler::RunSchedulingIteration(
     SchedulerStats* scheduler_stats) {
 
-  cout << "iteration running";
   // If this is the first iteration ever, we should ensure that the cost
   // model's notion of statistics is correct.
-  if (solver_dispatcher_->seq_num() == 0)
+  if (solver_dispatcher_->seq_num() == 0) {
     UpdateCostModelResourceStats();
+  }
 
   // If it's time to revisit time-dependent costs, do so now, just before
   // we run the solver.
@@ -447,6 +448,8 @@ uint64_t FlowScheduler::RunSchedulingIteration(
 
 void FlowScheduler::UpdateCostModelResourceStats() {
   if (FLAGS_flow_scheduling_cost_model ==
+      CostModelType::COST_MODEL_COCO_RESERVATIONS ||
+      FLAGS_flow_scheduling_cost_model ==
       CostModelType::COST_MODEL_COCO ||
       FLAGS_flow_scheduling_cost_model ==
       CostModelType::COST_MODEL_OCTOPUS ||
