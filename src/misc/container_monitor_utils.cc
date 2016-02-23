@@ -102,7 +102,6 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(string json_input, st
     throw parse_fail_message;
   }
 
-  
   int memory_usage_value = json_integer_value(memory_usage) / BYTES_TO_MB;
   if (memory_usage_value != 0) {
     resource_vector.set_ram_cap(memory_usage_value);
@@ -111,14 +110,15 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(string json_input, st
 }
 
 ResourceVector ContainerMonitorUtils::CreateResourceVector(int port,
-                                                  string container_monitor_uri,
+                                                  string container_monitor_host,
                                                   string task_container_name) {
   task_container_name = "/lxc/" + task_container_name;
-  string url = container_monitor_uri + ":" + to_string(port) + "/api/v2.0/stats" + task_container_name;
+  string url = container_monitor_host + ":" + to_string(port) +
+      "/api/v2.0/stats" + task_container_name;
   ResourceVector resource_vector;
   try {
     resource_vector = CreateResourceVector(GetHttpResponse(url), task_container_name);
-  } catch (string message) { 
+  } catch (string message) {
     LOG(ERROR) << message;
   }
 

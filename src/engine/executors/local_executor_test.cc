@@ -54,10 +54,9 @@ TEST_F(LocalExecutorTest, SimpleSyncProcessExecutionTest) {
   ResourceID_t rid;
   LocalExecutor le(rid, "");
   vector<string> empty_args;
-  unordered_map<string, string> empty_env;
   ResourceVector empty_resource_reservations;
   // We expect to get a return code of 0.
-  CHECK_EQ(le.RunProcessSync(1, "/bin/ls", empty_args, empty_env,
+  CHECK_EQ(le.RunProcessSync(1, "/bin/ls", empty_args, "/tmp/test-data",
                              empty_resource_reservations, false, false,
                              false, "/tmp/test"), 0);
 }
@@ -67,12 +66,12 @@ TEST_F(LocalExecutorTest, SyncProcessExecutionWithArgsTest) {
   ResourceID_t rid;
   LocalExecutor le(rid, "");
   vector<string> args;
-  unordered_map<string, string> env;
   ResourceVector resource_reservations;
   args.push_back("-l");
   // We expect to get a return code of 0.
-  CHECK_EQ(le.RunProcessSync(1, "/bin/ls", args, env, resource_reservations,
-                             false, false, false, "/tmp/test"), 0);
+  CHECK_EQ(le.RunProcessSync(1, "/bin/ls", args, "/tmp/test-data",
+                             resource_reservations, false, false, false,
+                             "/tmp/test"), 0);
 }
 
 // Test that we fail if we try to execute a non-existent binary.

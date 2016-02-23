@@ -54,7 +54,8 @@ class LocalExecutor : public ExecutorInterface {
   void HandleTaskFailure(TaskDescriptor* td);
   void RunTask(TaskDescriptor* td,
                bool firmament_binary);
-  void KillTask(TaskDescriptor* td);
+  void SendAbortMessage(TaskDescriptor* td);
+  void SendFailedMessage(TaskDescriptor* td);
   void CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeats);
   void CreateTaskStateChanges(vector<TaskStateMessage>* state_messages);
   virtual ostream& ToString(ostream* stream) const {
@@ -92,7 +93,7 @@ class LocalExecutor : public ExecutorInterface {
   int32_t RunProcessSync(TaskID_t task_id,
                          const string& cmdline,
                          vector<string> args,
-                         unordered_map<string, string> env,
+                         string data_dir,
                          ResourceVector resource_reservations,
                          bool perf_monitoring,
                          bool debug,
@@ -103,16 +104,14 @@ class LocalExecutor : public ExecutorInterface {
   int ExecuteBinaryInContainer(TaskID_t task_id,
                                string data_dir,
                                vector<char*> argv,
-                               vector<string> env_strings,
                                ResourceVector resource_reservations,
                                string container_name);
   void ShutdownContainerIfRunning(TaskID_t task_id);
   TaskHeartbeatMessage CreateTaskHeartbeat(TaskID_t task_id);
-  void SetFinalizeMessage(TaskID_t task_id, bool success);
+  void SetFinalizeMessage(TaskID_t task_id,
+                          TaskDescriptor::TaskState new_state);
   string PerfDataFileName(const TaskDescriptor& td);
   void ReadFromPipe(int fd);
-  void SetUpEnvironmentForTask(const TaskDescriptor& td,
-                               unordered_map<string, string>* env);
   char* TokenizeIntoArgv(const string& str, vector<char*>* argv);
   bool WaitForPerfFile(const string& file_name);
   void WriteToPipe(int fd, void* data, size_t len);

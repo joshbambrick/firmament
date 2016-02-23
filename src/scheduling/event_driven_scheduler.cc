@@ -33,10 +33,10 @@ DEFINE_double(reservation_safety_margin, 0.25,
              "Safety margin value for updating task reservations..");
 
 DEFINE_double(reservation_increment, 0.9,
-             "Increment value for updating task reservations."); 
+             "Increment value for updating task reservations.");
 
 DEFINE_double(reservation_overshoot_boost, 1.5,
-             "Overshoot boost value for updating task reservations."); 
+             "Overshoot boost value for updating task reservations.");
 
 namespace firmament {
 namespace scheduler {
@@ -81,7 +81,6 @@ EventDrivenScheduler::~EventDrivenScheduler() {
 }
 
 void EventDrivenScheduler::AddJob(JobDescriptor* jd_ptr) {
-  cout << "ADD JOB";
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
   InsertOrUpdate(&jobs_to_schedule_, JobIDFromString(jd_ptr->uuid()), jd_ptr);
 }
@@ -131,7 +130,7 @@ void EventDrivenScheduler::CheckRunningTasksHealth() {
                     << "heartbeats for " << FLAGS_task_fail_timeout
                     << "s and its handler thread has exited. "
                     << "Declaring it FAILED!";
-          HandleTaskFailure(td_ptr);
+          executor.second->SendFailedMessage(td_ptr);
         }
       }
     }
@@ -279,8 +278,31 @@ void EventDrivenScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
   }
 }
 
+void EventDrivenScheduler::HandleTaskAbortion(TaskDescriptor* td_ptr) {
+  boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+  // Find resource for task
+  ResourceID_t* res_id_ptr = BoundResourceForTask(td_ptr->uid());
+  CHECK_NOTNULL(res_id_ptr);
+  ResourceStatus* rs_ptr = FindPtrOrNull(*resource_map_, *res_id_ptr);
+  CHECK_NOTNULL(rs_ptr);
+  VLOG(1) << "Handling abortion of task " << td_ptr->uid()
+          << ", freeing resource " << *res_id_ptr;
+  CHECK(UnbindTaskFromResource(td_ptr, *res_id_ptr));
+  if (event_notifier_) {
+    event_notifier_->OnTaskCompletion(td_ptr, rs_ptr->mutable_descriptor());
+  }
+}
+
 void EventDrivenScheduler::HandleTaskDelegationFailure(
     TaskDescriptor* td_ptr) {
+  {
+  boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+  // Find the resource where the task was supposed to be delegated
+  ResourceID_t* res_id_ptr = BoundResourceForTask(td_ptr->uid());
+  CHECK_NOTNULL(res_id_ptr);
+  CHECK(UnbindTaskFromResource(td_ptr, *res_id_ptr));
+  }
+  ClearTaskDescriptorSchedulingData(td_ptr);
   RescheduleTask(td_ptr);
 }
 
@@ -301,6 +323,7 @@ void EventDrivenScheduler::HandleTaskEviction(TaskDescriptor* td_ptr,
   if (event_notifier_) {
     event_notifier_->OnTaskEviction(td_ptr, rd_ptr);
   }
+  ClearTaskDescriptorSchedulingData(td_ptr);
 }
 
 void EventDrivenScheduler::HandleTaskFailure(TaskDescriptor* td_ptr) {
@@ -416,7 +439,7 @@ void EventDrivenScheduler::KillRunningTask(
   CHECK_NOTNULL(exec);
 
   // Kill the task on the executor
-  exec->KillTask(td_ptr);
+  exec->SendAbortMessage(td_ptr);
   // Clear up task data (rescheduling may prevent this)
   exec->HandleTaskFailure(td_ptr);
 
@@ -428,19 +451,24 @@ void EventDrivenScheduler::KillRunningTask(
 void EventDrivenScheduler::RescheduleTask(
     TaskDescriptor* td_ptr) {
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
-  // Find the resource where the task was supposed to be delegated
-  ResourceID_t* res_id_ptr = BoundResourceForTask(td_ptr->uid());
-  CHECK_NOTNULL(res_id_ptr);
-  CHECK(UnbindTaskFromResource(td_ptr, *res_id_ptr));
   // Go back to try scheduling this task again
   td_ptr->set_state(TaskDescriptor::RUNNABLE);
   runnable_tasks_.insert(td_ptr->uid());
   td_ptr->clear_start_time();
   td_ptr->clear_finish_time();
+  td_ptr->clear_scheduled_to_resource();
+  td_ptr->clear_resource_reservations();
   JobDescriptor* jd = FindOrNull(*job_map_, JobIDFromString(td_ptr->job_id()));
   CHECK_NOTNULL(jd);
   // Try again to schedule...
   ScheduleJob(jd, NULL);
+}
+
+void EventDrivenScheduler::ClearTaskDescriptorSchedulingData(
+    TaskDescriptor* td_ptr) {
+  td_ptr->clear_delegated_to();
+  td_ptr->clear_last_heartbeat_location();
+  td_ptr->clear_last_heartbeat_time();
 }
 
 // Implementation of lazy graph reduction algorithm, as per p58, fig. 3.5 in
@@ -720,20 +748,17 @@ bool EventDrivenScheduler::UnbindTaskFromResource(TaskDescriptor* td_ptr,
 }
 
 void EventDrivenScheduler::UpdateTaskResourceReservations() {
-  // maybe: iterate through executors, or check that the resource is local
   for(thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
           = task_map_->begin();
       it != task_map_->end(); it++) {
     TaskDescriptor* td_ptr = it->second;
-    TaskID_t task_id = it->first;
-
-    ResourceID_t task_scheduled_res_id =
-        ResourceIDFromString(td_ptr->scheduled_to_resource());
-    ResourceID_t task_machine_res_id =
-        MachineResIDForResource(ResourceIDFromString(task_scheduled_res_id));
 
     if (td_ptr->state() == TaskDescriptor::RUNNING
-        && task_machine_res_id == machine_uuid_) {
+        && !td_ptr->has_delegated_to()
+        && td_ptr->has_scheduled_to_resource()) {
+      TaskID_t task_id = it->first;
+      ResourceID_t task_scheduled_res_id =
+          ResourceIDFromString(td_ptr->scheduled_to_resource());
       const TaskPerfStatisticsSample* stats =
           knowledge_base()->GetLatestStatsForTask(task_id);
       ResourceVector* reservations = td_ptr->mutable_resource_reservations();
@@ -745,14 +770,9 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
         uint64_t updated_reservation_ram = 0;
         uint64_t safety =
             floor((1 + FLAGS_reservation_safety_margin) * usage_ram);
-        if (usage_ram > current_reservation_ram) {
-          updated_reservation_ram =
-              usage_ram * FLAGS_reservation_overshoot_boost;
-        } else {
-          updated_reservation_ram =
-              current_reservation_ram * FLAGS_reservation_increment;
-        }
-
+        updated_reservation_ram = (usage_ram > current_reservation_ram)
+            ? usage_ram * FLAGS_reservation_overshoot_boost
+            : current_reservation_ram * FLAGS_reservation_increment;
         ResourceVector limit = td_ptr->resource_request();
         updated_reservation_ram = min(max(updated_reservation_ram, safety),
                                       limit.ram_cap());
@@ -761,17 +781,11 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                                   &old_reservations,
                                   reservations);
 
-        cout << "usage: " << usage_ram << endl;
-        cout << "new: " << updated_reservation_ram << endl;
-
         if (usage_ram > limit.ram_cap()) {
           ExecutorInterface* exec = FindPtrOrNull(executors_,
                                                   task_scheduled_res_id);
           CHECK_NOTNULL(exec);
-          // acutally, should be "failed"
-          // exec->KillTask(td_ptr);
-          // will this just work? do I need to also kill the thread and container? (clearupcompeltedtask probably does both)
-          HandleTaskFailure(td_ptr);
+          exec->SendAbortMessage(td_ptr);
         }
       }
     }
@@ -785,8 +799,8 @@ void EventDrivenScheduler::ClearTaskResourceReservations(TaskID_t task_id) {
   CHECK_NOTNULL(res_id_ptr);
   ResourceVector empty_resource_reservations;
   UpdateMachineReservations(*res_id_ptr, &(td->resource_reservations()),
-                                                &empty_resource_reservations);
-  td->mutable_resource_reservations()->CopyFrom(empty_resource_reservations);
+                            &empty_resource_reservations);
+  td->clear_resource_reservations();
 }
 
 void EventDrivenScheduler::UpdateMachineReservations(
@@ -797,11 +811,11 @@ void EventDrivenScheduler::UpdateMachineReservations(
   uint64_t new_reservation_ram = new_reservations->ram_cap();
   ResourceID_t machine_res_id = MachineResIDForResource(res_id);
   const ResourceVector* old_machine_reservations =
-                        knowledge_base()->GetMachineReservations(machine_res_id);
+      knowledge_base()->GetMachineReservations(machine_res_id);
   CHECK_NOTNULL(old_machine_reservations);
   ResourceVector new_machine_reservations;
   uint64_t new_machine_ram_reservation = new_reservation_ram +
-          old_machine_reservations->ram_cap() - old_reservation_ram;
+      old_machine_reservations->ram_cap() - old_reservation_ram;
   new_machine_reservations.set_ram_cap(new_machine_ram_reservation);
   knowledge_base()->UpdateMachineReservations(machine_res_id,
                                               new_machine_reservations);

@@ -26,7 +26,8 @@ class RemoteExecutor : public ExecutorInterface {
                  ResourceMap_t* res_map,
                  MessagingAdapterInterface<BaseMessage>* m_adapter_ptr);
   bool CheckRunningTasksHealth(vector<TaskID_t>* failed_tasks);
-  void KillTask(TaskDescriptor* td);
+  void SendAbortMessage(TaskDescriptor* td);
+  void SendFailedMessage(TaskDescriptor* td);
   void CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeats);
   void CreateTaskStateChanges(vector<TaskStateMessage>* state_messages);
   void HandleTaskCompletion(TaskDescriptor* td,

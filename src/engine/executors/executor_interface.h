@@ -28,7 +28,8 @@ class ExecutorInterface : public PrintableInterface {
   virtual void HandleTaskFailure(TaskDescriptor* td) = 0;
   virtual void RunTask(TaskDescriptor* td,
                        bool firmament_binary) = 0;
-  virtual void KillTask(TaskDescriptor* td) = 0;
+  virtual void SendAbortMessage(TaskDescriptor* td) = 0;
+  virtual void SendFailedMessage(TaskDescriptor* td) = 0;
   virtual ostream& ToString(ostream* stream) const = 0;
   virtual void CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeats) = 0;
   virtual void CreateTaskStateChanges(vector<TaskStateMessage>* state_messages) = 0;

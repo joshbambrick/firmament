@@ -264,8 +264,6 @@ void Coordinator::Run() {
 
   uint64_t cur_time = 0;
   uint64_t last_heartbeat_time = 0;
-
-
   // Main loop
   while (!exit_) {
     // Wait for events (i.e. messages from workers.
@@ -291,8 +289,6 @@ void Coordinator::Run() {
 
       // Record this sample locally
       scheduler_->knowledge_base()->AddMachineSample(stats);
-
-
       if (parent_chan_ != NULL) {
         SendHeartbeatToParent(stats);
       }
@@ -348,8 +344,7 @@ void Coordinator::MonitorResourceUsage() {
 
     if (machine_reservations) {
       uint64_t machine_reservation = machine_reservations->ram_cap();
-      uint64_t machine_capacity = 200; machine_capacity_.ram_cap();
-
+      uint64_t machine_capacity = machine_capacity_.ram_cap();
       if (machine_reservation > machine_capacity) {
         FreeResources(machine_reservation - machine_capacity);
       }
@@ -385,11 +380,10 @@ void Coordinator::FreeResources(uint64_t ram_to_free) {
   uint64_t ram_freed = 0;
   while (machine_running_task_descs.size() > 0 && ram_freed < ram_to_free) {
     TaskDescriptor* lowest_task_desc = machine_running_task_descs.top();
-    machine_running_task_descs.pop();
-    scheduler_->KillRunningTask(lowest_task_desc->uid(),
-                                          TaskKillMessage::RESOURCE_EXCEEDED);
     ram_freed += lowest_task_desc->resource_reservations().ram_cap();
-
+    scheduler_->KillRunningTask(lowest_task_desc->uid(),
+                                TaskKillMessage::RESOURCE_EXCEEDED);
+    machine_running_task_descs.pop();
     killed_tasks_to_reschedule_->insert(lowest_task_desc);
   }
 }
@@ -401,15 +395,15 @@ void Coordinator::PullTaskMessages() {
 
     vector<TaskStateMessage> states = scheduler_->CreateTaskStateChanges();
     for (vector<TaskStateMessage>::iterator it = states.begin();
-           it != states.end();
-           ++it) {
+         it != states.end();
+         ++it) {
       HandleTaskStateChange(*it);
     }
 
     vector<TaskHeartbeatMessage> heartbeats = scheduler_->CreateTaskHeartbeats();
     for (vector<TaskHeartbeatMessage>::iterator it = heartbeats.begin();
-           it != heartbeats.end();
-           ++it) {
+         it != heartbeats.end();
+         ++it) {
       HandleTaskHeartbeat(*it);
     }
   }
@@ -673,6 +667,11 @@ void Coordinator::HandleTaskHeartbeat(const TaskHeartbeatMessage& msg) {
     scheduler_->knowledge_base()->AddTaskSample(msg.stats());
   }
 
+  if (msg.has_resource_reservations()) {
+    tdp->mutable_resource_reservations()->CopyFrom(
+        msg.resource_reservations());
+  }
+
   // If we have a parent coordinator on whose behalf we are managing this task,
   // forward the message.
   // TODO(malte): this does not currently perform any aggregation, so we're
@@ -680,7 +679,13 @@ void Coordinator::HandleTaskHeartbeat(const TaskHeartbeatMessage& msg) {
   // should only selectively forward heartbeats and aggregate them.
   if (parent_chan_ != NULL) {
     BaseMessage bm;
-    bm.mutable_task_heartbeat()->CopyFrom(msg);
+    TaskHeartbeatMessage* heartbeat = bm.mutable_task_heartbeat();
+    heartbeat->CopyFrom(msg);
+    if (!msg.has_resource_reservations()
+        && tdp->has_resource_reservations()) {
+      heartbeat->mutable_resource_reservations()->CopyFrom(
+          tdp->resource_reservations());
+    }
     if (!SendMessageToRemote(parent_chan_, &bm)) {
       LOG(ERROR) << "Failed to forward heartbeat to parent coordinator!";
       // Try to re-register
@@ -854,23 +859,42 @@ void Coordinator::HandleTaskStateChange(
 
 void Coordinator::HandleTaskCompletion(const TaskStateMessage& msg,
                                        TaskDescriptor* td_ptr) {
-  if (killed_tasks_to_reschedule_->find(td_ptr) != killed_tasks_to_reschedule_->end()) {
+  bool reschedule_task = false;
+  if (killed_tasks_to_reschedule_->find(td_ptr)
+      != killed_tasks_to_reschedule_->end()) {
     killed_tasks_to_reschedule_->erase(td_ptr);
     if (msg.new_state() != TaskDescriptor::COMPLETED) {
-      scheduler_->RescheduleTask(td_ptr);
-      return;
+      reschedule_task = true;
+      if (!td_ptr->has_delegated_from()) {
+        scheduler_->RescheduleTask(td_ptr);
+        return;
+      }
     }
+  } else if (msg.has_report()
+             && msg.report().has_reschedule()
+             && msg.report().reschedule()) {
+    ResourceStatus* rsp = FindPtrOrNull(*associated_resources_,
+        ResourceIDFromString(td_ptr->scheduled_to_resource()));
+    scheduler_->HandleTaskEviction(td_ptr, rsp->mutable_descriptor());
+    scheduler_->RescheduleTask(td_ptr);
+    return;
   }
 
   TaskFinalReport report(msg.report());
-  // Report will be filled in if the task is local (currently)
-  scheduler_->HandleTaskCompletion(td_ptr, &report);
+  if (msg.new_state() == TaskDescriptor::COMPLETED || !reschedule_task) {
+    // Report will be filled in if the task is local (currently)
+    scheduler_->HandleTaskCompletion(td_ptr, &report);
+  } else {
+    // Report will be otherwise empty (tells the delegator to reschedule)
+    report.set_task_id(td_ptr->uid());
+    scheduler_->HandleTaskAbortion(td_ptr);
+    report.set_reschedule(reschedule_task);
+  }
 
   // First check if this is a delegated task, and forward the message if so
   if (td_ptr->has_delegated_from()) {
     BaseMessage bm;
     bm.mutable_task_state()->CopyFrom(msg);
-
     // Send along completion statistics to the coordinator as well.
     // TODO(malte): Make this all const including handle task completion method
     TaskFinalReport *sending_rep = bm.mutable_task_state()->mutable_report();
@@ -890,7 +914,11 @@ void Coordinator::HandleTaskCompletion(const TaskStateMessage& msg,
       scheduler_->HandleJobCompletion(JobIDFromString(jd->uuid()));
     }
   }
-  if (report.has_task_id()) {
+  if (reschedule_task) {
+    // Delete task descriptor to avoid confusion if the task rescheduled to
+    // this machine by the delegator
+    task_table_->erase(td_ptr->uid());
+  } else if (report.has_task_id()) {
     // Process the final report locally
     scheduler_->HandleTaskFinalReport(report, td_ptr);
   }

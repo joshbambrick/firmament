@@ -906,45 +906,20 @@ FlowGraphNode* CocoReservationsCostModel::GatherStats(FlowGraphNode* accumulator
         // Get TD for running tasks for reservation
         const TaskDescriptor& td = GetTask(rd_ptr->current_running_task());
         ResourceVector* reserved = rd_ptr->mutable_reserved_resources();
-        ResourceVector* reserved = rd_ptr->mutable_reserved_resources();
-        ResourceVector reservations;
-        
-        if (td.has_resource_reservations()){
-          reservations = td.resource_reservations();
-        }
+        ResourceVector empty_reservations;
+        const ResourceVector reservations = td.has_resource_reservations()
+            ? td.resource_reservations() : empty_reservations;
+
         ResourceVector request = td.resource_request();
+        reserved->set_cpu_cores(reservations.has_cpu_cores()
+            ? reservations.cpu_cores() : request.cpu_cores());
+        reserved->set_ram_cap(reservations.has_ram_cap()
+            ? reservations.ram_cap() : request.ram_cap());
+        reserved->set_disk_bw(reservations.has_disk_bw()
+            ? reservations.disk_bw() : request.disk_bw());
+        reserved->set_net_bw(reservations.has_net_bw()
+            ? reservations.net_bw() : request.net_bw());
 
-        float cpu_cores_reservation;
-        if (td.has_resource_reservations() && reservations.has_cpu_cores()) {
-          cpu_cores_reservation = reservations.cpu_cores();
-        } else {
-          cpu_cores_reservation = request.cpu_cores();
-        }
-        reserved->set_cpu_cores(cpu_cores_reservation);
-
-        uint64_t ram_cap_reservation;
-        if (td.has_resource_reservations() && reservations.has_ram_cap()) {
-          ram_cap_reservation = reservations.ram_cap();
-        } else {
-          ram_cap_reservation = request.ram_cap();
-        }
-        reserved->set_ram_cap(ram_cap_reservation);
-
-        uint64_t disk_bw_reservation;
-        if (td.has_resource_reservations() && reservations.has_disk_bw()) {
-          disk_bw_reservation = reservations.disk_bw();
-        } else {
-          disk_bw_reservation = request.disk_bw();
-        }
-        reserved->set_disk_bw(disk_bw_reservation);
-
-        uint64_t net_bw_reservation;
-        if (td.has_resource_reservations() && reservations.has_net_bw()) {
-          net_bw_reservation = reservations.net_bw();
-        } else {
-          net_bw_reservation = request.net_bw();
-        }
-        reserved->set_net_bw(net_bw_reservation);
       }
     }
     return accumulator;
