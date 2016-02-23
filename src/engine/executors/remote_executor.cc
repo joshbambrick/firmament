@@ -40,7 +40,11 @@ bool RemoteExecutor::CheckRunningTasksHealth(vector<TaskID_t>* failed_tasks) {
   return true;
 }
 
-void RemoteExecutor::KillTask(TaskDescriptor* td) {
+void RemoteExecutor::SendAbortMessage(TaskDescriptor* td) {
+  // TODO: Implement
+}
+
+void RemoteExecutor::SendFailedMessage(TaskDescriptor* td) {
   // TODO: Implement
 }
 
@@ -73,15 +77,9 @@ void RemoteExecutor::HandleTaskFailure(TaskDescriptor* td) {
 }
 
 void RemoteExecutor::RunTask(TaskDescriptor* td, bool firmament_binary) {
-  cout << "run task remotely" << endl;
-
   // Get a channel for talking to the remote executor
   MessagingChannelInterface<BaseMessage>* chan = GetChannel();
-
-  cout << "got channel ptr:" << chan << endl;
-
   CHECK_NOTNULL(chan);
-  cout << "got channel:" << *chan << endl;
   // We don't get any direct indication of the delegation's success here;
   // instead, we will (at a later point in time) receive a
   // TaskDelegationResponseMessage from the far end, which is handled
@@ -99,7 +97,6 @@ MessagingChannelInterface<BaseMessage>* RemoteExecutor::GetChannel() {
   CHECK(rs_ptr) << "Resource " << remote_resource_id_ << " appears to no "
                 << "longer exist in the resource map!";
   const string remote_endpoint = rs_ptr->location();
-  cout << "Remote task spawn on resource " << remote_resource_id_ << ", endpoint " << remote_endpoint << endl;
   VLOG(1) << "Remote task spawn on resource " << remote_resource_id_
           << ", endpoint " << remote_endpoint;
   MessagingChannelInterface<BaseMessage>* chan =

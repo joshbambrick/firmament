@@ -23,7 +23,13 @@ bool SimulatedExecutor::CheckRunningTasksHealth(
   return true;
 }
 
-void SimulatedExecutor::KillTask(TaskDescriptor* td) {
+
+void SimulatedExecutor::SendAbortMessage(TaskDescriptor* td) {
+  // No-op.
+  // The simulator is responsible for updating the task's state.
+}
+
+void SimulatedExecutor::SendFailedMessage(TaskDescriptor* td) {
   // No-op.
   // The simulator is responsible for updating the task's state.
 }

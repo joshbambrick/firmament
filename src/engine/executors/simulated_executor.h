@@ -20,7 +20,8 @@ class SimulatedExecutor : public ExecutorInterface {
   SimulatedExecutor(ResourceID_t resource_id,
                     const string& coordinator_uri);
   bool CheckRunningTasksHealth(vector<TaskID_t>* failed_tasks);
-  void KillTask(TaskDescriptor* td);
+  void SendAbortMessage(TaskDescriptor* td);
+  void SendFailedMessage(TaskDescriptor* td);
   void CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeats);
   void CreateTaskStateChanges(vector<TaskStateMessage>* state_messages);
   void HandleTaskCompletion(TaskDescriptor* td,

@@ -36,8 +36,8 @@ extern "C" {
 DEFINE_int32(container_monitor_port, 8010,
             "The port of the coordinator's container monitor");
 // define since this can be overridden by a flag, not used in coordinator
-DEFINE_string(container_monitor_uri, "",
-            "The URI of the container monitor.");
+DEFINE_string(container_monitor_host, "",
+            "The host of the container monitor.");
 DEFINE_bool(pin_tasks_to_cores, true,
             "Pin tasks to their allocated CPU core when executing.");
 DEFINE_bool(debug_tasks, false,
@@ -257,9 +257,12 @@ void LocalExecutor::HandleTaskEviction(TaskDescriptor* td) {
   // TODO(ionel): Implement.
 }
 
-void LocalExecutor::KillTask(TaskDescriptor* td) {
-  SetFinalizeMessage(td->uid(), false);
-  HandleTaskFailure(td);
+void LocalExecutor::SendAbortMessage(TaskDescriptor* td) {
+  SetFinalizeMessage(td->uid(), TaskDescriptor::ABORTED);
+}
+
+void LocalExecutor::SendFailedMessage(TaskDescriptor* td) {
+  SetFinalizeMessage(td->uid(), TaskDescriptor::FAILED);
 }
 
 void LocalExecutor::HandleTaskFailure(TaskDescriptor* td) {
@@ -282,6 +285,7 @@ void LocalExecutor::RunTask(TaskDescriptor* td,
   boost::unique_lock<boost::shared_mutex> handler_lock(handler_map_mutex_);
   boost::thread* task_thread = new boost::thread(
       boost::bind(&LocalExecutor::_RunTask, this, td, firmament_binary));
+
   CHECK(InsertIfNotPresent(&task_handler_threads_, td->uid(), task_thread));
   exec_condvar_.wait(exec_lock);
 }
@@ -291,13 +295,14 @@ bool LocalExecutor::_RunTask(TaskDescriptor* td,
   // Convert arguments as specified in TD into a string vector that we can munge
   // into an actual argv[].
   vector<string> args;
-  unordered_map<string, string> env;
   // Arguments
   if (td->args_size() > 0) {
     args = pb_to_vector(td->args());
   }
-  // Environment variables
-  SetUpEnvironmentForTask(*td, &env);
+  string data_dir = FLAGS_task_data_dir + "/" + td->job_id() + "-" +
+                    to_string(td->uid());
+
+  mkdir(data_dir.c_str(), 0700);
   // Path for task log files (stdout/stderr)
   string tasklog = FLAGS_task_log_dir + "/" + td->job_id() +
                    "-" + to_string(td->uid());
@@ -306,9 +311,9 @@ bool LocalExecutor::_RunTask(TaskDescriptor* td,
   // debugging flags, is this a Firmament task binary? (on/off; will cause
   // default arugments to be passed)
 
-  ResourceVector resource_reservations/* = td->resource_reservations()*/;
+  ResourceVector resource_reservations = td->resource_request();
   bool res = (RunProcessSync(
-      td->uid(), td->binary(), args, env, resource_reservations,
+      td->uid(), td->binary(), args, data_dir, resource_reservations,
       FLAGS_perf_monitoring, (FLAGS_debug_tasks ||
                               ((FLAGS_debug_interactively != 0) &&
                                    (td->uid() == FLAGS_debug_interactively))),
@@ -341,7 +346,7 @@ int32_t LocalExecutor::RunProcessAsync(TaskID_t task_id,
 int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
                                       const string& cmdline,
                                       vector<string> args,
-                                      unordered_map<string, string> env,
+                                      string data_dir,
                                       ResourceVector resource_reservations,
                                       bool perf_monitoring,
                                       bool debug,
@@ -368,14 +373,8 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
     // gdb invocation prefix.
     argv.reserve(args.size() + (default_args ? 4 : 3));
     perf_prefix = AddDebuggingToCommandLine(&argv);
-  } else if (perf_monitoring) {
-    // performance monitoring is active, so reserve extra space for the
-    // "perf" invocation prefix.
-    argv.reserve(args.size() + (default_args ? 11 : 10));
-    perf_prefix = AddPerfMonitoringToCommandLine(env, &argv);
   } else {
-    // no performance monitoring, so we only need to reserve space for the
-    // default and NULL args
+    // only need to reserve space for the default and NULL args
     argv.reserve(args.size() + (default_args ? 2 : 1));
   }
   argv.push_back((char*)(cmdline.c_str()));  // NOLINT
@@ -390,14 +389,6 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
   }
   // The last item in the argv for lxc is always NULL.
   argv.push_back(NULL);
-  vector<string> env_strings(env.size());
-  uint64_t i = 0;
-  for (unordered_map<string, string>::const_iterator it = env.begin();
-       it != env.end();
-       ++it) {
-    env_strings[i] = it->first + "=" + it->second;
-    ++i;
-  }
 
   // Print the whole command line
   string full_cmd_line;
@@ -413,16 +404,16 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
             << full_cmd_line;
   VLOG(1) << "About to fork child process for task execution of "
           << task_id << "!";
-  pid = fork();
 
   string container_name = GetTaskContainerName(task_id);
   {
     boost::unique_lock<boost::shared_mutex> containers_lock(task_container_names_map_mutex_);
     CHECK(InsertIfNotPresent(&task_container_names_, task_id, container_name));
     boost::unique_lock<boost::shared_mutex> running_lock(task_running_map_mutex_);
-    CHECK(InsertOrUpdate(&task_running_, task_id, true));
+    CHECK(InsertIfNotPresent(&task_running_, task_id, true));
   }
 
+  pid = fork();
   switch (pid) {
     case -1:
       // Error
@@ -459,8 +450,8 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
 #ifdef __linux__
       prctl(PR_SET_PDEATHSIG, SIGHUP);
 #endif
-     _exit(ExecuteBinaryInContainer(task_id, env["FLAGS_task_data_dir"],
-                    argv, env_strings, resource_reservations, container_name));
+     _exit(ExecuteBinaryInContainer(task_id, data_dir, argv,
+                                    resource_reservations, container_name));
     }
     default:
       // Parent
@@ -491,7 +482,7 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
         VLOG(1) << "Task process with PID " << pid << " exited with status "
                 << WEXITSTATUS(status);
         if (status == 0) {
-          SetFinalizeMessage(task_id, true);
+          SetFinalizeMessage(task_id, TaskDescriptor::COMPLETED);
         }
       } else if (WIFSIGNALED(status)) {
         VLOG(1) << "Task process with PID " << pid << " exited due to uncaught "
@@ -510,16 +501,16 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
 int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
                                             string data_dir,
                                             vector<char*> argv,
-                                            vector<string> env_strings,
                                             ResourceVector resource_reservations,
                                             string container_name) {
+
   lxc_container *c = lxc_container_new(container_name.c_str(), NULL);
-  if (!c->createl(c, "download", NULL, NULL, LXC_CREATE_QUIET,
-                                      "-d", "ubuntu", "-r", "trusty", NULL))) {
+  if (!c->createl(c, "ubuntu", NULL, NULL, LXC_CREATE_QUIET,
+              "-r", "trusty", "--user", "ubuntu", "--password", "ubuntu", NULL)) {
     LOG(ERROR) << "Could not start container for task " << task_id;
   }
 
-  const char* ram_cap = to_string(resource_reservations.ram_cap()).c_str();
+  const char* ram_cap = to_string(resource_reservations.ram_cap() * BYTES_TO_MB).c_str();
   if (strcmp(ram_cap, "0") != 0) {
     c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes", ram_cap);
   }
@@ -590,9 +581,12 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
   task_heartbeat.set_task_id(task_id);
   task_heartbeat.set_sequence_number(heartbeat_sequence_number);
   if (container_name) {
-    string monitor_uri = FLAGS_container_monitor_uri != "" ? FLAGS_container_monitor_uri : coordinator_uri_;
+    string monitor_host = (FLAGS_container_monitor_host != "")
+        ? FLAGS_container_monitor_host
+        : URITools::GetHostnameFromURI(coordinator_uri_);
 
-    ResourceVector usage = ContainerMonitorUtils::CreateResourceVector(FLAGS_container_monitor_port, monitor_uri, *container_name);
+    ResourceVector usage = ContainerMonitorUtils::CreateResourceVector(
+        FLAGS_container_monitor_port, monitor_host, *container_name);
 
     if (usage.has_ram_cap()) {
 
@@ -600,7 +594,6 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
       stats.set_task_id(task_id);
       stats.set_timestamp(GetCurrentTimestamp());
       stats.mutable_resources()->CopyFrom(usage);
-
       task_heartbeat.mutable_stats()->CopyFrom(stats);
     }
   }
@@ -635,22 +628,23 @@ void LocalExecutor::CreateTaskStateChanges(vector<TaskStateMessage>* state_messa
   }
 }
 
-void LocalExecutor::SetFinalizeMessage(TaskID_t task_id, bool success) {
-  boost::unique_lock<boost::shared_mutex> messages_lock(task_finalize_message_map_mutex_);
-  TaskStateMessage* message = FindOrNull(task_finalize_messages_, task_id);
-
-  
-  if (!message) {
+void LocalExecutor::SetFinalizeMessage(TaskID_t task_id,
+                                       TaskDescriptor::TaskState new_state) {
+  boost::unique_lock<boost::shared_mutex>messages_lock(
+      task_finalize_message_map_mutex_);
+  TaskStateMessage* current_message = FindOrNull(
+      task_finalize_messages_, task_id);
+  if (!current_message) {
     TaskStateMessage finalize_message;
     finalize_message.set_id(task_id);
-    finalize_message.set_new_state(success ? TaskDescriptor::COMPLETED : TaskDescriptor::ABORTED);
-    CHECK(InsertIfNotPresent(&task_finalize_messages_, task_id, finalize_message));
+    finalize_message.set_new_state(new_state);
+    CHECK(InsertIfNotPresent(&task_finalize_messages_, task_id,
+                             finalize_message));
   }
 }
 
 
 void LocalExecutor::ShutdownContainerIfRunning(TaskID_t task_id) {
-  cout << "shutdown" << endl;
   boost::unique_lock<boost::shared_mutex> containers_lock(task_container_names_map_mutex_);
   string* container_name = FindOrNull(task_container_names_, task_id);
   
@@ -679,37 +673,6 @@ string LocalExecutor::PerfDataFileName(const TaskDescriptor& td) {
   string fname = FLAGS_task_perf_dir + "/" + (to_string(local_resource_id_)) +
                  "-" + to_string(td.uid()) + ".perf";
   return fname;
-}
-
-void LocalExecutor::SetUpEnvironmentForTask(
-    const TaskDescriptor& td,
-    unordered_map<string, string>* env) {
-  if (coordinator_uri_.empty())
-    LOG(WARNING) << "Executor does not have the coordinator_uri_ field set. "
-                 << "The task will be unable to communicate with the "
-                 << "coordinator!";
-  // Make data directory for task
-  string data_dir = FLAGS_task_data_dir + "/" + td.job_id() + "-" +
-                    to_string(td.uid());
-  mkdir(data_dir.c_str(), 0700);
-  // Set environment variables
-  // N.B.: we pass a completely scrubbed environment to the task, so we need to
-  // define even things like PATH that would normally be inherited.
-  InsertIfNotPresent(env, "PATH",
-      "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-  InsertIfNotPresent(env, "FLAGS_task_id", to_string(td.uid()));
-  InsertIfNotPresent(env, "PERF_FNAME", PerfDataFileName(td));
-  InsertIfNotPresent(env, "FLAGS_coordinator_uri", coordinator_uri_);
-  InsertIfNotPresent(env, "FLAGS_resource_id", to_string(local_resource_id_));
-  InsertIfNotPresent(env, "FLAGS_heartbeat_interval",
-                     to_string(heartbeat_interval_));
-  InsertIfNotPresent(env, "FLAGS_task_data_dir", data_dir);
-  VLOG(1) << "Task's environment variables:";
-  for (unordered_map<string, string>::const_iterator env_iter = env->begin();
-       env_iter != env->end();
-       ++env_iter) {
-    VLOG(1) << "  " << env_iter->first << ": " << env_iter->second;
-  }
 }
 
 char* LocalExecutor::TokenizeIntoArgv(const string& str, vector<char*>* argv) {

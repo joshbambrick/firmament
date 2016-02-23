@@ -129,6 +129,14 @@ class SchedulerInterface : public PrintableInterface {
    */
   virtual void HandleTaskCompletion(TaskDescriptor* td_ptr,
                                     TaskFinalReport* report) = 0;
+
+  /**
+   * Handles the abortion of a task. This usually involves freeing up its
+   * resource by setting it idle.
+   * @param td_ptr the task descriptor of the completed task
+   */
+  virtual void HandleTaskAbortion(TaskDescriptor* td_ptr) = 0;
+
   /**
    * Handles the failure of an attempt to delegate a task to a subordinate
    * coordinator. This can happen because the resource is no longer there (it
