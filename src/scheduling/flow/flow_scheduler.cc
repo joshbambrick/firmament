@@ -27,7 +27,7 @@ DEFINE_int32(flow_scheduling_cost_model, 0,
              "Flow scheduler cost model to use. "
              "Values: 0 = TRIVIAL, 1 = RANDOM, 2 = SJF, 3 = QUINCY, "
              "4 = WHARE, 5 = COCO, 6 = OCTOPUS, 7 = VOID, "
-             "8 = SIMULATED QUINCY");
+             "8 = SIMULATED QUINCY, 9 = COCO RESERVATIONS");
 DEFINE_int64(time_dependent_cost_update_frequency, 10000000ULL,
              "Update frequency for time-dependent costs, in microseconds.");
 DEFINE_bool(debug_cost_model, false,

@@ -6,10 +6,12 @@
 package firmament;
 
 import "base/task_perf_statistics_sample.proto";
+import "base/resource_vector.proto";
 
 message TaskHeartbeatMessage {
   required uint64 task_id = 1;
   optional string location = 2;
   optional uint64 sequence_number = 3;
   optional TaskPerfStatisticsSample stats = 4;
+  optional ResourceVector resource_reservations = 5;
 }

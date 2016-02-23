@@ -40,7 +40,11 @@ bool RemoteExecutor::CheckRunningTasksHealth(vector<TaskID_t>* failed_tasks) {
   return true;
 }
 
-void RemoteExecutor::KillTask(TaskDescriptor* td) {
+void RemoteExecutor::SendAbortMessage(TaskDescriptor* td) {
+  // TODO: Implement
+}
+
+void RemoteExecutor::SendFailedMessage(TaskDescriptor* td) {
   // TODO: Implement
 }
 
@@ -73,15 +77,9 @@ void RemoteExecutor::HandleTaskFailure(TaskDescriptor* td) {
 }
 
 void RemoteExecutor::RunTask(TaskDescriptor* td, bool firmament_binary) {
-  cout << "run task remotely" << endl;
-
   // Get a channel for talking to the remote executor
   MessagingChannelInterface<BaseMessage>* chan = GetChannel();
-
-  cout << "got channel ptr:" << chan << endl;
-
   CHECK_NOTNULL(chan);
-  cout << "got channel:" << *chan << endl;
   // We don't get any direct indication of the delegation's success here;
   // instead, we will (at a later point in time) receive a
   // TaskDelegationResponseMessage from the far end, which is handled

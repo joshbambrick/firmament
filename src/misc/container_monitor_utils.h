@@ -13,8 +13,8 @@ class ContainerMonitorUtils {
   public:
     static void StartContainerMonitor(int port);
     static ResourceVector CreateResourceVector(int port,
-                                 string container_monitor_uri,
-                                 string task_container_name);
+                                               string container_monitor_host,
+                                               string task_container_name);
 
   protected:
     static ResourceVector CreateResourceVector(string json_input,
