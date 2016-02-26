@@ -502,36 +502,44 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
                                             vector<char*> argv,
                                             ResourceVector resource_reservations,
                                             string container_name) {
+  LOG(INFO) << "Creating container for task " << task_id;
   lxc_container *c = lxc_container_new(container_name.c_str(), NULL);
   if (!c->createl(c, "ubuntu", NULL, NULL, LXC_CREATE_QUIET,
-              "-r", "trusty", "--user", "ubuntu", "--password", "ubuntu", NULL)) {
+                "-r", "trusty", NULL)) {
     LOG(ERROR) << "Could not start container for task " << task_id;
   }
+  LOG(INFO) << "Successfully created container for task " << task_id;
 
-  const char* ram_cap = to_string(resource_reservations.ram_cap() * BYTES_TO_MB).c_str();
+  const char* ram_cap =
+      to_string(resource_reservations.ram_cap() * BYTES_TO_MB).c_str();
   if (strcmp(ram_cap, "0") != 0) {
     c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes", ram_cap);
   }
   const char* disk_bw = to_string(resource_reservations.disk_bw()).c_str();
   if (strcmp(disk_bw, "0") != 0) {
-    c->set_config_item(c, "lxc.cgroup.blkio.throttle.write_bps_device", disk_bw);
-    c->set_config_item(c, "lxc.cgroup.blkio.throttle.read_bps_device", disk_bw);
+    c->set_config_item(c, "lxc.cgroup.blkio.throttle.write_bps_device",
+                       disk_bw);
+    c->set_config_item(c, "lxc.cgroup.blkio.throttle.read_bps_device",
+                       disk_bw);
   }
 
+  string full_task_perf_dir =
+      boost::filesystem::canonical(FLAGS_task_perf_dir).string();
+  string full_task_lib_dir =
+      boost::filesystem::canonical(FLAGS_task_lib_dir).string();
+  string full_task_log_dir =
+      boost::filesystem::canonical(FLAGS_task_log_dir).string();
+  string full_data_dir =
+      boost::filesystem::canonical(data_dir).string();
 
-  string full_task_perf_dir = boost::filesystem::canonical(FLAGS_task_perf_dir).string();
-  string full_task_lib_dir = boost::filesystem::canonical(FLAGS_task_lib_dir).string();
-  string full_task_log_dir = boost::filesystem::canonical(FLAGS_task_log_dir).string();
-  string full_data_dir = boost::filesystem::canonical(data_dir).string();
-
-  c->set_config_item(c, "lxc.mount.entry",  (full_task_perf_dir + " " + full_task_perf_dir.substr(1)
-                              + " none defaults,bind,create=dir 0 0").c_str());
-  c->set_config_item(c, "lxc.mount.entry",   (full_task_lib_dir + " " + full_task_lib_dir.substr(1)
-                              + " none defaults,bind,create=dir 0 0").c_str());
-  c->set_config_item(c, "lxc.mount.entry", (full_task_log_dir + " " + full_task_log_dir.substr(1)
-                              + " none defaults,bind,create=dir 0 0").c_str());
-  c->set_config_item(c, "lxc.mount.entry", (full_data_dir + " " + full_data_dir.substr(1)
-                              + " none defaults,bind,create=dir 0 0").c_str());
+  c->set_config_item(c, "lxc.mount.entry",
+                     CreateMountConfigEntry(full_task_perf_dir).c_str());
+  c->set_config_item(c, "lxc.mount.entry",
+                     CreateMountConfigEntry(full_task_lib_dir).c_str());
+  c->set_config_item(c, "lxc.mount.entry",
+                     CreateMountConfigEntry(full_task_log_dir).c_str());
+  c->set_config_item(c, "lxc.mount.entry",
+                     CreateMountConfigEntry(full_data_dir).c_str());
   c->start(c, 0, NULL);
 
   lxc_attach_options_t attach_options = LXC_ATTACH_OPTIONS_DEFAULT;
@@ -539,12 +547,18 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
   // Change to task's working directory
   attach_options.initial_cwd = (char*) full_data_dir.c_str();
 
+
+  LOG(INFO) << "Executing binary of task " << task_id;
   int res = -1;
   res = c->attach_run_wait(c, &attach_options, argv[0], &argv[0]);
 
   ShutdownContainerIfRunning(task_id);
 
   return res != -1 ? 0 : res;
+}
+
+string LocalExecutor::CreateMountConfigEntry(string dir) {
+  return dir + " " + dir.substr(1) + " none defaults,bind,create=dir 0 0";
 }
 
 void LocalExecutor::CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeats) {
@@ -586,8 +600,7 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
     ResourceVector usage = ContainerMonitorUtils::CreateResourceVector(
         FLAGS_container_monitor_port, monitor_host, *container_name);
 
-    if (usage.has_ram_cap()) {
-
+    if (usage.has_ram_cap() || usage.has_disk_bw() || usage.has_net_bw()) {
       TaskPerfStatisticsSample stats;
       stats.set_task_id(task_id);
       stats.set_timestamp(GetCurrentTimestamp());

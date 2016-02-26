@@ -113,6 +113,7 @@ class LocalExecutor : public ExecutorInterface {
   string PerfDataFileName(const TaskDescriptor& td);
   void ReadFromPipe(int fd);
   char* TokenizeIntoArgv(const string& str, vector<char*>* argv);
+  string CreateMountConfigEntry(string dir);
   bool WaitForPerfFile(const string& file_name);
   void WriteToPipe(int fd, void* data, size_t len);
   string GetTaskContainerName(TaskID_t task_id);

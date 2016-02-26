@@ -765,18 +765,33 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
       if (reservations && stats && stats->has_resources()) {
         ResourceVector old_reservations;
         old_reservations.CopyFrom(td_ptr->resource_reservations());
+        ResourceVector limit = td_ptr->resource_request();
+        
         uint64_t usage_ram = stats->resources().ram_cap();
         uint64_t current_reservation_ram = reservations->ram_cap();
         uint64_t updated_reservation_ram = 0;
-        uint64_t safety =
+        uint64_t safety_ram =
             floor((1 + FLAGS_reservation_safety_margin) * usage_ram);
         updated_reservation_ram = (usage_ram > current_reservation_ram)
             ? usage_ram * FLAGS_reservation_overshoot_boost
             : current_reservation_ram * FLAGS_reservation_increment;
-        ResourceVector limit = td_ptr->resource_request();
-        updated_reservation_ram = min(max(updated_reservation_ram, safety),
+        updated_reservation_ram = min(max(updated_reservation_ram, safety_ram),
                                       limit.ram_cap());
         reservations->set_ram_cap(updated_reservation_ram);
+
+        uint64_t usage_disk_bw = stats->resources().disk_bw();
+        uint64_t current_reservation_disk_bw = reservations->disk_bw();
+        uint64_t safety_disk_bw =
+            floor((1 + FLAGS_reservation_safety_margin) * usage_disk_bw);
+        uint64_t updated_reservation_disk_bw =
+            (usage_disk_bw > current_reservation_disk_bw)
+            ? usage_disk_bw * FLAGS_reservation_overshoot_boost
+            : current_reservation_disk_bw * FLAGS_reservation_increment;
+        updated_reservation_disk_bw = min(max(updated_reservation_disk_bw,
+                                              safety_disk_bw),
+                                          limit.disk_bw());
+        reservations->set_disk_bw(updated_reservation_disk_bw);
+
         UpdateMachineReservations(task_scheduled_res_id,
                                   &old_reservations,
                                   reservations);

@@ -88,24 +88,62 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(string json_input, st
   json_t* has_memory = json_object_get(latest_event, "has_memory");
   json_t* has_diskio = json_object_get(latest_event, "has_diskio");
 
-  if (json_is_false(has_diskio) || json_is_false(has_memory)) {
+  if (json_is_false(has_diskio) && json_is_false(has_memory)) {
     throw parse_fail_message;
   }
 
-  json_t* memory = json_object_get(latest_event, "memory");
-  if (!memory) {
-    throw parse_fail_message;
-  }
-  json_t* memory_usage = json_object_get(memory, "usage");
+  if (json_is_true(has_memory)) {
+    json_t* memory = json_object_get(latest_event, "memory");
+    if (!memory) {
+      throw parse_fail_message;
+    }
+    json_t* memory_usage = json_object_get(memory, "usage");
 
-  if (!memory_usage) {
-    throw parse_fail_message;
+    if (!memory_usage) {
+      throw parse_fail_message;
+    }
+
+    int memory_usage_value = json_integer_value(memory_usage) / BYTES_TO_MB;
+    if (memory_usage_value != 0) {
+      resource_vector.set_ram_cap(memory_usage_value);
+    }
   }
 
-  int memory_usage_value = json_integer_value(memory_usage) / BYTES_TO_MB;
-  if (memory_usage_value != 0) {
-    resource_vector.set_ram_cap(memory_usage_value);
+  uint64_t total_disk_usage = 0;
+  uint64_t total_disk_time_ns = 0;
+  if (json_is_true(has_diskio)) {
+    json_t* diskio = json_object_get(latest_event, "diskio");
+    json_t* io_service_bytes = json_object_get(diskio, "io_service_bytes");
+    if (io_service_bytes) {
+      uint64_t groups = json_array_size(io_service_bytes);
+      for (uint32_t i = 0; i < groups; ++i) {
+        json_t* cur_group = json_array_get(io_service_bytes, i);
+        json_t* cur_disk_stats = json_object_get(cur_group, "stats");
+        json_t* cur_disk_usage = json_object_get(cur_disk_stats, "Total");
+        total_disk_usage += json_integer_value(cur_disk_usage);
+      }
+    }
+
+    json_t* io_service_time = json_object_get(diskio, "io_service_time");
+    if (io_service_time) {
+      uint64_t groups = json_array_size(io_service_time);
+      for (uint32_t i = 0; i < groups; ++i) {
+        json_t* cur_group = json_array_get(io_service_time, i);
+        json_t* cur_disk_stats = json_object_get(cur_group, "stats");
+        json_t* cur_disk_time = json_object_get(cur_disk_stats, "Total");
+        total_disk_time_ns += json_integer_value(cur_disk_time);
+      }
+    }
   }
+
+  if (total_disk_time_ns > 0) {
+    uint64_t disk_bw_value =
+        total_disk_usage / (total_disk_time_ns / SECONDS_TO_NANOSECONDS);
+    if (disk_bw_value != 0) {
+      resource_vector.set_disk_bw(disk_bw_value);
+    }
+  }
+
   return resource_vector;
 }
 
