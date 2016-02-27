@@ -3,10 +3,11 @@ SUFFIX=misc
 
 include $(ROOT_DIR)/include/Makefile.config
 
-LIBS += -lboost_system -lssl -lcrypto
+LIBS += -lboost_system -lssl -lcrypto -lboost_filesystem
 
 LIB = libfirmament_misc.a
-OBJS = generate_trace.o pb_utils.o string_utils.o container_monitor_utils.o utils.o
+OBJS = generate_trace.o pb_utils.o string_utils.o container_monitor_utils.o \
+       container_disk_usage_tracker.o utils.o
 PBS =
 TESTS = envelope_test utils_test
 TESTS_envelope_DEPS = $(BUILD_DIR)/messages/libfirmament_messages.a \

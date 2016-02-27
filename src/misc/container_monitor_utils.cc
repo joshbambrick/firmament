@@ -109,10 +109,14 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(string json_input, st
     }
   }
 
+  // TODO(Josh): consider tracking difference in bytes and time between runs
+  // the current solution considers mean disk bandwidth over entire execution
+  // alternatively, could sample over the last n readings, or the last t time
   uint64_t total_disk_usage = 0;
   uint64_t total_disk_time_ns = 0;
   if (json_is_true(has_diskio)) {
     json_t* diskio = json_object_get(latest_event, "diskio");
+
     json_t* io_service_bytes = json_object_get(diskio, "io_service_bytes");
     if (io_service_bytes) {
       uint64_t groups = json_array_size(io_service_bytes);
@@ -136,13 +140,10 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(string json_input, st
     }
   }
 
-  if (total_disk_time_ns > 0) {
-    uint64_t disk_bw_value =
-        total_disk_usage / (total_disk_time_ns / SECONDS_TO_NANOSECONDS);
-    if (disk_bw_value != 0) {
-      resource_vector.set_disk_bw(disk_bw_value);
-    }
-  }
+  uint64_t disk_bw_value = total_disk_time_ns > 0
+      ? total_disk_usage / (total_disk_time_ns / SECONDS_TO_NANOSECONDS)
+      : 0;
+  resource_vector.set_disk_bw(disk_bw_value);
 
   return resource_vector;
 }

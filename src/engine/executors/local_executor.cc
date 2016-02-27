@@ -38,6 +38,10 @@ DEFINE_int32(container_monitor_port, 8010,
 // define since this can be overridden by a flag, not used in coordinator
 DEFINE_string(container_monitor_host, "",
             "The host of the container monitor.");
+DEFINE_bool(use_storage_resource_monitoring, true,
+            "Whether to support monitoring of container storage use.");
+DEFINE_string(rootfs_base_dir, "/var/lib/lxc/",
+            "Directory where container rootfs directories will be.");
 DEFINE_bool(pin_tasks_to_cores, true,
             "Pin tasks to their allocated CPU core when executing.");
 DEFINE_bool(debug_tasks, false,
@@ -140,6 +144,11 @@ void LocalExecutor::CleanUpCompletedTask(const TaskDescriptor& td) {
   LOG(INFO) << "kill(2) for task " << td.uid() << " returned " << ret;
   task_pids_.erase(td.uid());
   task_running_.erase(td.uid());
+  if (FLAGS_use_storage_resource_monitoring) {
+    boost::unique_lock<boost::shared_mutex> disk_tracker_lock(
+        task_disk_tracker_map_mutex_);
+    task_disk_trackers_.erase(td.uid());
+  }
   ClearCompletedTaskFinalizeMessages(td.uid(), true);
 }
 
@@ -412,6 +421,14 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
     CHECK(InsertIfNotPresent(&task_running_, task_id, true));
   }
 
+  if (FLAGS_use_storage_resource_monitoring) {
+      boost::unique_lock<boost::shared_mutex> disk_tracker_lock(
+          task_disk_tracker_map_mutex_);
+      string fs_dir = FLAGS_rootfs_base_dir + container_name + "/";
+      CHECK(InsertIfNotPresent(&task_disk_trackers_, task_id,
+                               ContainerDiskUsageTracker(fs_dir)));
+  }
+
   pid = fork();
   switch (pid) {
     case -1:
@@ -504,8 +521,9 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
                                             string container_name) {
   LOG(INFO) << "Creating container for task " << task_id;
   lxc_container *c = lxc_container_new(container_name.c_str(), NULL);
-  if (!c->createl(c, "ubuntu", NULL, NULL, LXC_CREATE_QUIET,
-                "-r", "trusty", NULL)) {
+  if (!c->createl(c, "ubuntu",
+                  FLAGS_use_storage_resource_monitoring ? "aufs" : NULL,
+                  NULL, LXC_CREATE_QUIET, "-r", "trusty", NULL)) {
     LOG(ERROR) << "Could not start container for task " << task_id;
   }
   LOG(INFO) << "Successfully created container for task " << task_id;
@@ -540,6 +558,7 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
                      CreateMountConfigEntry(full_task_log_dir).c_str());
   c->set_config_item(c, "lxc.mount.entry",
                      CreateMountConfigEntry(full_data_dir).c_str());
+
   c->start(c, 0, NULL);
 
   lxc_attach_options_t attach_options = LXC_ATTACH_OPTIONS_DEFAULT;
@@ -600,11 +619,27 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
     ResourceVector usage = ContainerMonitorUtils::CreateResourceVector(
         FLAGS_container_monitor_port, monitor_host, *container_name);
 
-    if (usage.has_ram_cap() || usage.has_disk_bw() || usage.has_net_bw()) {
+    if (usage.has_ram_cap() || usage.has_disk_bw()) {
       TaskPerfStatisticsSample stats;
       stats.set_task_id(task_id);
       stats.set_timestamp(GetCurrentTimestamp());
-      stats.mutable_resources()->CopyFrom(usage);
+      ResourceVector* stats_usage = stats.mutable_resources();
+      stats_usage->CopyFrom(usage);
+
+      if (FLAGS_use_storage_resource_monitoring) {
+        {
+          boost::unique_lock<boost::shared_mutex> disk_tracker_lock(
+              task_disk_tracker_map_mutex_);
+          ContainerDiskUsageTracker* task_disk_tracker =
+              FindOrNull(task_disk_trackers_, task_id);
+          CHECK_NOTNULL(task_disk_tracker);
+
+          if (task_disk_tracker->IsInitialized()) {
+            stats_usage->set_disk_cap(task_disk_tracker->GetFullDiskUsage());
+          }
+        }
+        UpdateTaskDiskTrackerAsync(task_id);
+      }
       task_heartbeat.mutable_stats()->CopyFrom(stats);
     }
   }
@@ -749,6 +784,20 @@ void LocalExecutor::ReadFromPipe(int fd) {
   }
   fflush(stdout);
   CHECK_EQ(fclose(stream), 0);
+}
+
+void LocalExecutor::UpdateTaskDiskTrackerSync(TaskID_t task_id) {
+  boost::unique_lock<boost::shared_mutex> disk_tracker_lock(
+      task_disk_tracker_map_mutex_);
+  ContainerDiskUsageTracker* task_disk_tracker =
+      FindOrNull(task_disk_trackers_, task_id);
+  CHECK_NOTNULL(task_disk_tracker);
+  task_disk_tracker->Update();
+}
+
+void LocalExecutor::UpdateTaskDiskTrackerAsync(TaskID_t task_id) {
+  boost::thread async_update_thread(
+      boost::bind(&LocalExecutor::UpdateTaskDiskTrackerSync, this, task_id));
 }
 
 string LocalExecutor::GetTaskContainerName(TaskID_t task_id) {

@@ -30,6 +30,7 @@ extern "C" {
 #include "base/common.h"
 #include "base/types.h"
 #include "base/task_final_report.pb.h"
+#include "misc/container_disk_usage_tracker.h"
 #include "messages/task_heartbeat_message.pb.h"
 #include "messages/task_state_message.pb.h"
 #include "engine/executors/task_health_checker.h"
@@ -116,6 +117,8 @@ class LocalExecutor : public ExecutorInterface {
   string CreateMountConfigEntry(string dir);
   bool WaitForPerfFile(const string& file_name);
   void WriteToPipe(int fd, void* data, size_t len);
+  void UpdateTaskDiskTrackerSync(TaskID_t task_id);
+  void UpdateTaskDiskTrackerAsync(TaskID_t task_id);
   string GetTaskContainerName(TaskID_t task_id);
   // This holds the currently configured URI of the coordinator for this
   // resource (which must be unique, for now).
@@ -136,6 +139,7 @@ class LocalExecutor : public ExecutorInterface {
   boost::shared_mutex pid_map_mutex_;
   boost::shared_mutex task_finalize_message_map_mutex_;
   boost::shared_mutex task_container_names_map_mutex_;
+  boost::shared_mutex task_disk_tracker_map_mutex_;
   boost::shared_mutex task_heartbeat_sequence_numbers_map_mutex_;
   boost::condition_variable exec_condvar_;
   // Map to each task's local handler thread
@@ -146,6 +150,7 @@ class LocalExecutor : public ExecutorInterface {
   unordered_map<TaskID_t, bool> task_running_;
   unordered_map<TaskID_t, bool> cleared_up_tasks_;
   unordered_map<TaskID_t, string> task_container_names_;
+  unordered_map<TaskID_t, ContainerDiskUsageTracker> task_disk_trackers_;
   unordered_map<TaskID_t, uint64_t> task_heartbeat_sequence_numbers_;
 };
 
