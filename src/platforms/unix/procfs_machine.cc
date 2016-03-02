@@ -7,6 +7,7 @@
 
 #include <sys/types.h>
 #include <sys/sysinfo.h>
+#include <sys/statvfs.h>
 
 #include <cstdio>
 #include <string>
@@ -21,8 +22,12 @@ DEFINE_string(monitor_netif, "eth0",
               "Network interface on which to monitor traffic statistics.");
 DEFINE_string(monitor_blockdev, "sda",
               "Block device on which to monitor I/O statistics.");
+DEFINE_string(monitor_blockdev_mount_dir, "/",
+              "Mount dir of block device on which to monitor I/O statistics.");
 DEFINE_int64(monitor_blockdev_maxbw, -1,
              "Maximum read/write bandwidth of monitored block device.");
+DEFINE_int64(monitor_blockdev_capacity, -1,
+             "Capacity of monitored block device.");
 DECLARE_uint64(heartbeat_interval);
 
 namespace firmament {
@@ -75,6 +80,10 @@ const MachinePerfStatisticsSample* ProcFSMachine::CreateStatistics(
       (static_cast<double>(FLAGS_heartbeat_interval) /
        static_cast<double>(SECONDS_TO_MICROSECONDS)));
   disk_stats_ = disk_stats;
+
+  DiskSpaceStatistics_t disk_space_stats = GetDiskSpaceStats();
+  stats->set_disk_cap(
+      disk_space_stats.capacity_space - disk_space_stats.available_space);
 
   return stats;
 }
@@ -195,6 +204,17 @@ DiskStatistics_t ProcFSMachine::GetDiskStats() {
   return disk_stats;
 }
 
+DiskSpaceStatistics_t ProcFSMachine::GetDiskSpaceStats() {
+  struct statvfs stats;
+  statvfs(FLAGS_monitor_blockdev_mount_dir.c_str(), &stats);
+
+  DiskSpaceStatistics_t space_stats;
+  space_stats.capacity_space = stats.f_blocks * stats.f_frsize;
+  space_stats.free_space = stats.f_bfree * stats.f_frsize;
+  space_stats.available_space = stats.f_bavail * stats.f_frsize;
+  return space_stats;
+}
+
 void ProcFSMachine::GetMachineCapacity(ResourceVector* cap) {
   // Extract the total available resource capacities on this machine
   MemoryStatistics_t mem_stats = GetMemoryStats();
@@ -239,6 +259,15 @@ void ProcFSMachine::GetMachineCapacity(ResourceVector* cap) {
     }
   } else {
     cap->set_disk_bw(FLAGS_monitor_blockdev_maxbw);
+  }
+
+  // Get disk capacity
+  if (FLAGS_monitor_blockdev_capacity == -1) {
+    LOG(INFO) << "Block device capacity not supplied";
+    DiskSpaceStatistics_t disk_space_stats = GetDiskSpaceStats();
+    cap->set_disk_cap(disk_space_stats.capacity_space / BYTES_TO_MB);
+  } else {
+    cap->set_disk_cap(FLAGS_monitor_blockdev_capacity);
   }
 }
 

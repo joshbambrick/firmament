@@ -18,10 +18,24 @@
 #include "misc/utils.h"
 #include "scheduling/common.h"
 #include "scheduling/knowledge_base.h"
-#include "scheduling/flow/coco_cost_model.h"
 #include "scheduling/flow/cost_model_interface.h"
 
 namespace firmament {
+
+typedef struct ReservationsCostVector {
+  // record number of dimensions here
+  static const uint16_t dimensions_ = 9;
+  // Data follows
+  uint32_t priority_;
+  uint32_t cpu_cores_;
+  uint32_t ram_cap_;
+  uint32_t network_bw_;
+  uint32_t disk_bw_;
+  uint32_t disk_cap_;
+  uint32_t machine_type_score_;
+  uint32_t interference_score_;
+  uint32_t locality_score_;
+} ReservationsCostVector_t;
 
 class CocoReservationsCostModel : public CostModelInterface {
  public:
@@ -62,7 +76,7 @@ class CocoReservationsCostModel : public CostModelInterface {
     GetEquivClassToEquivClassesArcs(EquivClass_t tec);
   void AddMachine(ResourceTopologyNodeDescriptor* rtnd_ptr);
   void AddTask(TaskID_t task_id);
-  void PrintCostVector(CostVector_t cv);
+  void PrintCostVector(ReservationsCostVector_t cv);
   void RemoveMachine(ResourceID_t res_id);
   void RemoveTask(TaskID_t task_id);
   FlowGraphNode* GatherStats(FlowGraphNode* accumulator, FlowGraphNode* other);
@@ -108,7 +122,7 @@ class CocoReservationsCostModel : public CostModelInterface {
   const TaskDescriptor& GetTask(TaskID_t task_id);
   void GetInterferenceScoreForTask(TaskID_t task_id,
                                    CoCoInterferenceScores* interference_vector);
-  Cost_t FlattenCostVector(CostVector_t cv);
+  Cost_t FlattenCostVector(ReservationsCostVector_t cv);
   Cost_t FlattenInterferenceScore(const CoCoInterferenceScores& iv);
   // Get machine resource for a lower-level resource
   ResourceID_t MachineResIDForResource(ResourceID_t res_id);
