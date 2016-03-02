@@ -228,7 +228,7 @@ class Coordinator : public Node,
                    bool local);
   bool RegisterWithCoordinator(StreamSocketsChannel<BaseMessage>* chan);
   void DetectLocalResources();
-  void FreeResources(uint64_t ram_to_free);
+  void FreeResources(ResourceVector resources_to_free);
   void PullTaskMessages();
   void MonitorResourceUsage();
   bool HasJobCompleted(const JobDescriptor& jd);

@@ -35,6 +35,12 @@ typedef struct {
 } DiskStatistics_t;
 
 typedef struct {
+  uint64_t capacity_space;
+  uint64_t free_space;
+  uint64_t available_space;
+} DiskSpaceStatistics_t;
+
+typedef struct {
   uint64_t mem_total;
   uint64_t mem_free;
   uint64_t mem_buffers;
@@ -57,6 +63,7 @@ class ProcFSMachine {
   vector<CPUStatistics_t> GetCPUStats();
   vector<CpuUsage> GetCPUUsage();
   DiskStatistics_t GetDiskStats();
+  DiskSpaceStatistics_t GetDiskSpaceStats();
   MemoryStatistics_t GetMemoryStats();
   NetworkStatistics_t GetNetworkStats();
 

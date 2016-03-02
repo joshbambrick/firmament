@@ -635,7 +635,7 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
           CHECK_NOTNULL(task_disk_tracker);
 
           if (task_disk_tracker->IsInitialized()) {
-            stats_usage->set_disk_cap(task_disk_tracker->GetFullDiskUsage());
+            stats_usage->set_disk_cap(task_disk_tracker->GetFullDiskUsage() / BYTES_TO_MB);
           }
         }
         UpdateTaskDiskTrackerAsync(task_id);

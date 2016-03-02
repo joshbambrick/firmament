@@ -343,25 +343,70 @@ void Coordinator::MonitorResourceUsage() {
           scheduler_->knowledge_base()->GetMachineReservations(machine_uuid_);
 
     if (machine_reservations) {
-      uint64_t machine_reservation = machine_reservations->ram_cap();
-      uint64_t machine_capacity = machine_capacity_.ram_cap();
-      if (machine_reservation > machine_capacity) {
-        FreeResources(machine_reservation - machine_capacity);
+      bool reservation_too_high = false;
+      ResourceVector reservations_to_free;
+
+      if (machine_reservations->ram_cap() > machine_capacity_.ram_cap()) {
+        reservations_to_free.set_ram_cap(
+            machine_reservations->ram_cap() - machine_capacity_.ram_cap());
+        reservation_too_high = true;
+      }
+
+      if (machine_reservations->disk_bw() > machine_capacity_.disk_bw()) {
+        reservations_to_free.set_disk_bw(
+            machine_reservations->disk_bw() - machine_capacity_.disk_bw());
+        reservation_too_high = true;
+      }
+
+      if (machine_reservations->disk_cap() > machine_capacity_.disk_cap()) {
+        reservations_to_free.set_disk_cap(
+            machine_reservations->disk_cap() - machine_capacity_.disk_cap());
+        reservation_too_high = true;
+      }
+
+      if (reservation_too_high) {
+        FreeResources(reservations_to_free);
       }
     }
   }
 }
 
-void Coordinator::FreeResources(uint64_t ram_to_free) {
-  auto comp = [](TaskDescriptor* a, TaskDescriptor* b) {
+void Coordinator::FreeResources(ResourceVector resources_to_free) {
+  auto comp = [&resources_to_free](TaskDescriptor* a, TaskDescriptor* b) {
     if (a->priority() != b->priority())
       return a->priority() > b->priority() ? true : false;
     if (!a->has_resource_reservations() || !b->has_resource_reservations()) {
       return !a->has_resource_reservations() ? true : false;
     }
-    uint64_t a_ram = a->resource_reservations().ram_cap();
-    uint64_t b_ram = b->resource_reservations().ram_cap();
-    return a_ram < b_ram ? true : false;
+    // the order in which resource types are considered is arbitrary
+    ResourceVector a_reservations = a->resource_reservations();
+    ResourceVector b_reservations = b->resource_reservations();
+    if (resources_to_free.has_ram_cap()) {
+      uint64_t a_ram = a_reservations.ram_cap();
+      uint64_t b_ram = b_reservations.ram_cap();
+      if (a_ram != b_ram) {
+        return a_ram < b_ram ? true : false;
+      }
+    }
+
+    if (resources_to_free.has_disk_bw()) {
+      uint64_t a_disk_bw = a_reservations.disk_bw();
+      uint64_t b_disk_bw = b_reservations.disk_bw();
+      if (a_disk_bw != b_disk_bw) {
+        return a_disk_bw < b_disk_bw ? true : false;
+      }
+    }
+
+    if (resources_to_free.has_disk_cap()) {
+      uint64_t a_disk_cap = a_reservations.disk_cap();
+      uint64_t b_disk_cap = b_reservations.disk_cap();
+      if (a_disk_cap != b_disk_cap) {
+        return a_disk_cap < b_disk_cap ? true : false;
+      }
+    }
+
+    // the two resources are equal in every way
+    return true;
   };
 
   priority_queue<TaskDescriptor*, vector<TaskDescriptor*>, decltype(comp)>
@@ -377,10 +422,21 @@ void Coordinator::FreeResources(uint64_t ram_to_free) {
       machine_running_task_descs.push(td_ptr);
   }
 
-  uint64_t ram_freed = 0;
-  while (machine_running_task_descs.size() > 0 && ram_freed < ram_to_free) {
+  ResourceVector resource_freed;
+  while (machine_running_task_descs.size() > 0
+      && (resource_freed.ram_cap() < resources_to_free.ram_cap()
+          || resource_freed.disk_bw() < resources_to_free.disk_bw()
+          || resource_freed.disk_cap() < resources_to_free.disk_cap())) {
     TaskDescriptor* lowest_task_desc = machine_running_task_descs.top();
-    ram_freed += lowest_task_desc->resource_reservations().ram_cap();
+    resource_freed.set_ram_cap(
+        resource_freed.ram_cap()
+        + lowest_task_desc->resource_reservations().ram_cap());
+    resource_freed.set_disk_bw(
+        resource_freed.disk_bw()
+        + lowest_task_desc->resource_reservations().disk_bw());
+    resource_freed.set_disk_cap(
+        resource_freed.disk_cap()
+        + lowest_task_desc->resource_reservations().disk_cap());
     scheduler_->KillRunningTask(lowest_task_desc->uid(),
                                 TaskKillMessage::RESOURCE_EXCEEDED);
     machine_running_task_descs.pop();

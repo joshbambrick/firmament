@@ -31,6 +31,7 @@ job_desc.root_task.resource_request.cpu_cores = 0.1
 job_desc.root_task.resource_request.ram_cap = 128
 job_desc.root_task.resource_request.net_bw = 0
 job_desc.root_task.resource_request.disk_bw = 0
+job_desc.root_task.resource_request.disk_cap = 500
 if len(sys.argv) > 4:
   job_desc.root_task.args.extend(shlex.split(sys.argv[4]))
 #job_desc.root_task.args.append("--v=2")
