@@ -766,37 +766,61 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
         ResourceVector old_reservations;
         old_reservations.CopyFrom(td_ptr->resource_reservations());
         ResourceVector limit = td_ptr->resource_request();
-        
-        uint64_t usage_ram = stats->resources().ram_cap();
-        uint64_t current_reservation_ram = reservations->ram_cap();
-        uint64_t updated_reservation_ram = 0;
-        uint64_t safety_ram =
-            floor((1 + FLAGS_reservation_safety_margin) * usage_ram);
-        updated_reservation_ram = (usage_ram > current_reservation_ram)
-            ? usage_ram * FLAGS_reservation_overshoot_boost
-            : current_reservation_ram * FLAGS_reservation_increment;
-        updated_reservation_ram = min(max(updated_reservation_ram, safety_ram),
-                                      limit.ram_cap());
-        reservations->set_ram_cap(updated_reservation_ram);
+        bool kill_task = false;
 
-        uint64_t usage_disk_bw = stats->resources().disk_bw();
-        uint64_t current_reservation_disk_bw = reservations->disk_bw();
-        uint64_t safety_disk_bw =
-            floor((1 + FLAGS_reservation_safety_margin) * usage_disk_bw);
-        uint64_t updated_reservation_disk_bw =
-            (usage_disk_bw > current_reservation_disk_bw)
-            ? usage_disk_bw * FLAGS_reservation_overshoot_boost
-            : current_reservation_disk_bw * FLAGS_reservation_increment;
-        updated_reservation_disk_bw = min(max(updated_reservation_disk_bw,
-                                              safety_disk_bw),
-                                          limit.disk_bw());
-        reservations->set_disk_bw(updated_reservation_disk_bw);
+        if (stats->resources().has_ram_cap()) {
+          uint64_t usage_ram = stats->resources().ram_cap();
+          uint64_t current_reservation_ram = reservations->ram_cap();
+          uint64_t updated_reservation_ram = 0;
+          uint64_t safety_ram =
+              floor((1 + FLAGS_reservation_safety_margin) * usage_ram);
+          updated_reservation_ram = (usage_ram > current_reservation_ram)
+              ? usage_ram * FLAGS_reservation_overshoot_boost
+              : current_reservation_ram * FLAGS_reservation_increment;
+          updated_reservation_ram = min(max(updated_reservation_ram,
+                                            safety_ram),
+                                        limit.ram_cap());
+          reservations->set_ram_cap(updated_reservation_ram);
+          kill_task = kill_task || usage_ram > limit.ram_cap();
+        }
+
+        if (stats->resources().has_disk_bw()) {
+          uint64_t usage_disk_bw = stats->resources().disk_bw();
+          uint64_t current_reservation_disk_bw = reservations->disk_bw();
+          uint64_t safety_disk_bw =
+              floor((1 + FLAGS_reservation_safety_margin) * usage_disk_bw);
+          uint64_t updated_reservation_disk_bw =
+              (usage_disk_bw > current_reservation_disk_bw)
+              ? usage_disk_bw * FLAGS_reservation_overshoot_boost
+              : current_reservation_disk_bw * FLAGS_reservation_increment;
+          updated_reservation_disk_bw = min(max(updated_reservation_disk_bw,
+                                                safety_disk_bw),
+                                            limit.disk_bw());
+          reservations->set_disk_bw(updated_reservation_disk_bw);
+          kill_task = kill_task || usage_disk_bw > limit.disk_bw();
+        }
+
+        if (stats->resources().has_disk_cap()) {
+          uint64_t usage_disk_cap = stats->resources().disk_cap();
+          uint64_t current_reservation_disk_cap = reservations->disk_cap();
+          uint64_t safety_disk_cap =
+              floor((1 + FLAGS_reservation_safety_margin) * usage_disk_cap);
+          uint64_t updated_reservation_disk_cap =
+              (usage_disk_cap > current_reservation_disk_cap)
+              ? usage_disk_cap * FLAGS_reservation_overshoot_boost
+              : current_reservation_disk_cap * FLAGS_reservation_increment;
+          updated_reservation_disk_cap = min(max(updated_reservation_disk_cap,
+                                                safety_disk_cap),
+                                            limit.disk_cap());
+          reservations->set_disk_cap(updated_reservation_disk_cap);
+          kill_task = kill_task || usage_disk_cap > limit.disk_cap();
+        }
 
         UpdateMachineReservations(task_scheduled_res_id,
                                   &old_reservations,
                                   reservations);
 
-        if (usage_ram > limit.ram_cap()) {
+        if (kill_task) {
           ExecutorInterface* exec = FindPtrOrNull(executors_,
                                                   task_scheduled_res_id);
           CHECK_NOTNULL(exec);
