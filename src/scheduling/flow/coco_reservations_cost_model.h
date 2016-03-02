@@ -18,10 +18,24 @@
 #include "misc/utils.h"
 #include "scheduling/common.h"
 #include "scheduling/knowledge_base.h"
-#include "scheduling/flow/coco_cost_model.h"
 #include "scheduling/flow/cost_model_interface.h"
 
 namespace firmament {
+
+typedef struct CostVector {
+  // record number of dimensions here
+  static const uint16_t dimensions_ = 9;
+  // Data follows
+  uint32_t priority_;
+  uint32_t cpu_cores_;
+  uint32_t ram_cap_;
+  uint32_t network_bw_;
+  uint32_t disk_bw_;
+  uint32_t disk_cap_;
+  uint32_t machine_type_score_;
+  uint32_t interference_score_;
+  uint32_t locality_score_;
+} CostVector_t;
 
 class CocoReservationsCostModel : public CostModelInterface {
  public:

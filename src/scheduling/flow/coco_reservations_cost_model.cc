@@ -61,6 +61,7 @@ void CocoReservationsCostModel::AccumulateResourceStats(ResourceDescriptor* accu
   acc_avail->set_ram_cap(max(acc_avail->ram_cap(), other_avail->ram_cap()));
   acc_avail->set_net_bw(max(acc_avail->net_bw(), other_avail->net_bw()));
   acc_avail->set_disk_bw(max(acc_avail->disk_bw(), other_avail->disk_bw()));
+  acc_avail->set_disk_cap(max(acc_avail->disk_cap(), other_avail->disk_cap()));
   // Track the maximum resources available in any dimensions at resources below
   // the accumulator node
   ResourceVector* acc_max =
@@ -70,6 +71,7 @@ void CocoReservationsCostModel::AccumulateResourceStats(ResourceDescriptor* accu
   acc_max->set_ram_cap(max(acc_max->ram_cap(), other_max->ram_cap()));
   acc_max->set_net_bw(max(acc_max->net_bw(), other_max->net_bw()));
   acc_max->set_disk_bw(max(acc_max->disk_bw(), other_max->disk_bw()));
+  acc_max->set_disk_cap(max(acc_max->disk_cap(), other_max->disk_cap()));
   // Track the minimum resources available in any dimensions at resources below
   // the accumulator node
   ResourceVector* acc_min =
@@ -93,6 +95,10 @@ void CocoReservationsCostModel::AccumulateResourceStats(ResourceDescriptor* accu
     acc_min->set_disk_bw(other_min->disk_bw());
   else if (other_min->disk_bw() > 0)
     acc_min->set_disk_bw(min(acc_min->disk_bw(), other_min->disk_bw()));
+  if (acc_min->disk_cap() == 0)
+    acc_min->set_disk_cap(other_min->disk_cap());
+  else if (other_min->disk_cap() > 0)
+    acc_min->set_disk_cap(min(acc_min->disk_cap(), other_min->disk_cap()));
   // Running/idle task count
   accumulator->set_num_running_tasks_below(
       accumulator->num_running_tasks_below() +
@@ -125,6 +131,8 @@ void CocoReservationsCostModel::AccumulateResourceStats(ResourceDescriptor* accu
                               other_reservation.net_bw());
   acc_reservation->set_disk_bw(acc_reservation->disk_bw() +
                                other_reservation.disk_bw());
+  acc_reservation->set_disk_cap(acc_reservation->disk_cap() +
+                                other_reservation.disk_cap());
 }
 
 uint64_t CocoReservationsCostModel::ComputeInterferenceScore(ResourceID_t res_id) {
@@ -295,6 +303,7 @@ Cost_t CocoReservationsCostModel::FlattenCostVector(CostVector_t cv) {
   accumulator += cv.ram_cap_;
   accumulator += cv.network_bw_;
   accumulator += cv.disk_bw_;
+  accumulator += cv.disk_cap_;
   accumulator += cv.machine_type_score_;
   accumulator += cv.interference_score_;
   accumulator += cv.locality_score_;
@@ -518,6 +527,9 @@ Cost_t CocoReservationsCostModel::TaskToUnscheduledAggCost(TaskID_t task_id) {
   cost_vector.disk_bw_ = omega_ +
     NormalizeCost(td.resource_request().disk_bw(),
                   min_machine_capacity_.disk_bw());
+  cost_vector.disk_cap_ = omega_ +
+    NormalizeCost(td.resource_request().disk_cap(),
+                  min_machine_capacity_.disk_cap());
   cost_vector.machine_type_score_ = 1;
   cost_vector.interference_score_ = 1;
   cost_vector.locality_score_ = 0;
@@ -594,6 +606,10 @@ Cost_t CocoReservationsCostModel::ResourceNodeToResourceNodeCost(
         NormalizeCost(machine_rd.resource_capacity().disk_bw() -
                       rd.available_resources().disk_bw(),
                       machine_rd.resource_capacity().disk_bw());
+    cost_vector.disk_cap_ =
+        NormalizeCost(machine_rd.resource_capacity().disk_cap() -
+                      rd.available_resources().disk_cap(),
+                      machine_rd.resource_capacity().disk_cap());
   }
   // XXX(malte): unimplemented
   cost_vector.machine_type_score_ = 0;
@@ -647,6 +663,8 @@ Cost_t CocoReservationsCostModel::TaskToEquivClassAggregator(TaskID_t task_id,
                                           max_machine_capacity_.net_bw());
   cost_vector.disk_bw_ = NormalizeCost(td.resource_request().disk_bw(),
                                        max_machine_capacity_.disk_bw());
+  cost_vector.disk_cap_ = NormalizeCost(td.resource_request().disk_cap(),
+                                        max_machine_capacity_.disk_cap());
   cost_vector.machine_type_score_ = 0;
   cost_vector.interference_score_ = 0;
   cost_vector.locality_score_ = 0;
@@ -759,6 +777,7 @@ string CocoReservationsCostModel::ResourceVectorToString(
   out << rv.cpu_cores() << delimiter;
   out << rv.ram_cap() << delimiter;
   out << rv.disk_bw() << delimiter;
+  out << rv.disk_cap() << delimiter;
   out << rv.net_bw();
   return out.str();
 }
@@ -775,6 +794,8 @@ void CocoReservationsCostModel::AddMachine(ResourceTopologyNodeDescriptor* rtnd_
     max_machine_capacity_.set_net_bw(cap.net_bw());
   if (cap.disk_bw() > max_machine_capacity_.disk_bw())
     max_machine_capacity_.set_disk_bw(cap.disk_bw());
+  if (cap.disk_cap() > max_machine_capacity_.disk_cap())
+    max_machine_capacity_.set_disk_cap(cap.disk_cap());
   // Check if this machine's capacity is the minimum in any capacity
   if (min_machine_capacity_.cpu_cores() == 0.0 ||
       cap.cpu_cores() < min_machine_capacity_.cpu_cores()) {
@@ -791,6 +812,10 @@ void CocoReservationsCostModel::AddMachine(ResourceTopologyNodeDescriptor* rtnd_
   if (min_machine_capacity_.disk_bw() == 0 ||
       cap.disk_bw() < min_machine_capacity_.disk_bw()) {
     min_machine_capacity_.set_disk_bw(cap.disk_bw());
+  }
+  if (min_machine_capacity_.disk_cap() == 0 ||
+      cap.disk_cap() < min_machine_capacity_.disk_cap()) {
+    min_machine_capacity_.set_disk_cap(cap.disk_cap());
   }
 }
 
@@ -917,6 +942,8 @@ FlowGraphNode* CocoReservationsCostModel::GatherStats(FlowGraphNode* accumulator
             ? reservations.ram_cap() : request.ram_cap());
         reserved->set_disk_bw(reservations.has_disk_bw()
             ? reservations.disk_bw() : request.disk_bw());
+        reserved->set_disk_cap(reservations.has_disk_cap()
+            ? reservations.disk_cap() : request.disk_cap());
         reserved->set_net_bw(reservations.has_net_bw()
             ? reservations.net_bw() : request.net_bw());
 
@@ -1012,6 +1039,18 @@ CocoReservationsCostModel::CompareResourceVectors(
           << ", " << rv2.disk_bw()
           << "; " << at_least_one_fit << "/"
           << at_least_one_nonfit;
+  // Disk capacity
+  if (rv1.disk_cap() <= rv2.disk_cap()) {
+    at_least_one_fit = true;
+  } else {
+    at_least_one_nonfit = true;
+    VLOG(2) << "non-fit due to disk cap: " << rv1.disk_cap() << "/"
+            << rv2.disk_cap();
+  }
+  VLOG(2) << "Disk cap: " << rv1.disk_cap()
+          << ", " << rv2.disk_cap()
+          << "; " << at_least_one_fit << "/"
+          << at_least_one_nonfit;
   // Network bandwidth
   if (rv1.net_bw() <= rv2.net_bw()) {
     at_least_one_fit = true;
@@ -1071,6 +1110,7 @@ uint64_t CocoReservationsCostModel::TaskFitCount(const ResourceVector& req,
     tmp.set_ram_cap(num_tasks * req.ram_cap());
     tmp.set_net_bw(num_tasks * req.net_bw());
     tmp.set_disk_bw(num_tasks * req.disk_bw());
+    tmp.set_disk_cap(num_tasks * req.disk_cap());
     VLOG(2) << "Fit comparison (" << num_tasks << " instances):";
     VLOG(2) << tmp.DebugString();
     VLOG(2) << avail.DebugString();
@@ -1104,6 +1144,8 @@ CocoReservationsCostModel::TaskFitsUnderResourceAggregate(
                             static_cast<int64_t>(reserved.net_bw()), 0L));
   unreserved.set_disk_bw(max(static_cast<int64_t>(cap.disk_bw()) -
                              static_cast<int64_t>(reserved.disk_bw()), 0L));
+  unreserved.set_disk_cap(max(static_cast<int64_t>(cap.disk_cap()) -
+                             static_cast<int64_t>(reserved.disk_cap()), 0L));
   VLOG(1) << "Unreserved resources under " << res.uuid() << ": "
           << ResourceVectorToString(unreserved, " / ");
   if (CompareResourceVectors(*request, unreserved) ==
