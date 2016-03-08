@@ -93,6 +93,17 @@ ResourceID_t PickRandomResourceID(
     const unordered_set<ResourceID_t,
       boost::hash<boost::uuids::uuid>>& leaf_res_ids);
 
+template<class Type, class Comp> Type GetPercentile(const vector<Type>& items,
+                                                    double percentile,
+                                                    Comp comp,
+                                                    uint32_t start_index,
+                                                    uint32_t end_index);
+template<class Type, class Comp> Type GetPercentile(const vector<Type>& items,
+                                                    double percentile,
+                                                    Comp comp);
+template<class Type> Type GetPercentile(const vector<Type>& items,
+                                        double percentile);
+
 }  // namespace firmament
 
 #endif  // FIRMAMENT_MISC_UTILS_H
