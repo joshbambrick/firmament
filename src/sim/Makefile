@@ -24,6 +24,7 @@ TESTS_DEPS = $(BUILD_DIR)/sim/google_trace_loader.o \
              $(BUILD_DIR)/scheduling/flow/libfirmament_scheduling_flow.a \
              $(BUILD_DIR)/scheduling/libfirmament_scheduling.a \
              $(BUILD_DIR)/engine/executors/libfirmament_engine_executors.a \
+             $(BUILD_DIR)/engine/request_usages/libfirmament_engine_request_usages.a \
              $(BUILD_DIR)/engine/libfirmament_engine.a \
              $(BUILD_DIR)/scheduling/simple/libfirmament_scheduling_simple.a \
              $(BUILD_DIR)/misc/libfirmament_misc.a \
@@ -56,6 +57,7 @@ $(OBJ_DIR)/simulator: $(addprefix $(OBJ_DIR)/, $(SIMULATOR_OBJS)) \
 	$(BUILD_DIR)/scheduling/flow/libfirmament_scheduling_flow.a \
 	$(BUILD_DIR)/scheduling/libfirmament_scheduling.a \
 	$(BUILD_DIR)/engine/executors/libfirmament_engine_executors.a \
+	$(BUILD_DIR)/engine/request_usages/libfirmament_engine_request_usages.a \
 	$(BUILD_DIR)/engine/libfirmament_engine.a \
 	$(BUILD_DIR)/scheduling/simple/libfirmament_scheduling_simple.a \
 	$(BUILD_DIR)/misc/libfirmament_misc.a \
@@ -83,6 +85,7 @@ $(OBJ_DIR)/simulator: $(addprefix $(OBJ_DIR)/, $(SIMULATOR_OBJS)) \
 		$(BUILD_DIR)/scheduling/flow/libfirmament_scheduling_flow.a \
 		$(BUILD_DIR)/scheduling/libfirmament_scheduling.a \
 		$(BUILD_DIR)/engine/executors/libfirmament_engine_executors.a \
+		$(BUILD_DIR)/engine/request_usages/libfirmament_engine_request_usages.a \
 		$(BUILD_DIR)/engine/libfirmament_engine.a \
 		$(BUILD_DIR)/scheduling/simple/libfirmament_scheduling_simple.a \
 		$(BUILD_DIR)/misc/libfirmament_misc.a \
