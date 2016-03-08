@@ -142,6 +142,19 @@ export CPPREST_LIB
 
 
 #######################################
+# ANN-SPECIFIC DEFINITIONS
+#######################################
+
+# Header directory for cpprest
+ANN_INC_DIR ?= $(EXT_DIR)/ann/ann_1.1.2/include/
+export ANN_INC_DIR
+
+# Path to the compiled ANN library
+ANN_LIB ?= $(EXT_DIR)/ann/ann_1.1.2/lib/libANN.a
+export ANN_LIB
+
+
+#######################################
 # SpookyV2-SPECIFIC DEFINITIONS
 #######################################
 
@@ -160,7 +173,8 @@ export SPOOKY_OBJ
 
 INCLUDES = -I$(SRC_ROOT_DIR) -I$(SRC_GEN_DIR) -I$(CSRC_GEN_DIR) \
            -I$(GTEST_INC_DIR) -I$(HDFS_INC_DIR) -I$(PB2JSON_INC_DIR) \
-           -I$(PION_INC_DIR) -I$(LXC_INC_DIR) -I$(CPPREST_INC_DIR) -I$(SPOOKY_INC_DIR) -I$(TSSTLC_INC_DIR)
+           -I$(PION_INC_DIR) -I$(LXC_INC_DIR) -I$(CPPREST_INC_DIR) \
+           -I$(ANN_INC_DIR) -I$(SPOOKY_INC_DIR) -I$(TSSTLC_INC_DIR)
            #-I/usr/lib/llvm-3.2/lib/clang/3.2/include/
            #-I$(GPERFTOOLS_INC_DIR)
 
@@ -173,7 +187,7 @@ INCLUDES = -I$(SRC_ROOT_DIR) -I$(SRC_GEN_DIR) -I$(CSRC_GEN_DIR) \
 # every binary to the whole world.
 #LIBS = -lgflags -lglog -ltcmalloc -lprofiler -lpthread -lprotobuf -lboost_system -lboost_thread -lboost_regex -lboost_date_time -lboost_filesystem -lpion-common -lpion-net -llog4cpp -lhwloc
 #LIBS += $(GPERFTOOLS_LIB) -lgflags -lglog -lpthread -lprotobuf
-LIBS += -lgflags -lglog -lprotobuf -lrt -lpthread -llxc -lcurl -ljansson
+LIBS += -lgflags -lglog -lprotobuf -lrt -lpthread -llxc -lcurl -ljansson -L${EXT_DIR}/ann/ann_1.1.2/lib -lANN
 #LIBS += -lgflags -lglog -lpthread -lprotobuf
 
 

@@ -333,6 +333,16 @@ if [[ ! -f ${CPPREST_INSTALL_FILE} ]]; then
 fi
 cd ${EXT_DIR}
 
+# ANN K-NN library
+print_subhdr "ANN K-NN"
+mkdir -p ann
+cd ann
+get_dep_arch "ann" "http://www.cs.umd.edu/~mount/ANN/Files/1.1.2/ann_1.1.2.tar.gz"
+cd ann_1.1.2
+RES=$(make linux-g++)
+print_succ_or_fail ${RES}
+cd ${EXT_DIR}
+
 
 # Google Gflags command line flag library
 print_subhdr "GOOGLE GFLAGS LIBRARY"
