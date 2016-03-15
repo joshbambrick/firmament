@@ -93,6 +93,32 @@ ResourceID_t PickRandomResourceID(
     const unordered_set<ResourceID_t,
       boost::hash<boost::uuids::uuid>>& leaf_res_ids);
 
+template<class Type, class Comp> Type GetPercentile(const vector<Type>& items,
+                                                    double percentile,
+                                                    Comp comp,
+                                                    uint32_t start_index,
+                                                    uint32_t end_index) {
+  vector<Type> copied_items(items.begin() + start_index,
+                            items.begin() + end_index);
+  uint32_t n_to_get = (percentile * copied_items.size()) / 100.0L;
+  nth_element(copied_items.begin(),
+              copied_items.begin() + n_to_get,
+              copied_items.end(),
+              comp);
+  return copied_items[n_to_get];
+}
+
+template<class Type, class Comp> Type GetPercentile(const vector<Type>& items,
+                                                    double percentile,
+                                                    Comp comp) {
+  return GetPercentile(items, percentile, comp, 0, items.size() - 1);
+}
+
+template<class Type> Type GetPercentile(const vector<Type>& items,
+                                        double percentile) {
+  return GetPercentile(items, percentile, less<Type>());
+}
+
 }  // namespace firmament
 
 #endif  // FIRMAMENT_MISC_UTILS_H
