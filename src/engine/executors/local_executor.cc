@@ -133,6 +133,7 @@ void LocalExecutor::CleanUpCompletedTask(const TaskDescriptor& td) {
   boost::unique_lock<boost::shared_mutex> handler_lock(handler_map_mutex_);
   boost::unique_lock<boost::shared_mutex> pids_lock(pid_map_mutex_);
   boost::unique_lock<boost::shared_mutex> running_lock(task_running_map_mutex_);
+  boost::unique_lock<boost::shared_mutex> heartbeat_lock(task_heartbeat_update_map_mutex_);
   task_handler_threads_.erase(td.uid());
   // Kill container
   ShutdownContainerIfRunning(td.uid());
@@ -144,6 +145,8 @@ void LocalExecutor::CleanUpCompletedTask(const TaskDescriptor& td) {
   LOG(INFO) << "kill(2) for task " << td.uid() << " returned " << ret;
   task_pids_.erase(td.uid());
   task_running_.erase(td.uid());
+  task_heartbeat_sequence_numbers_.erase(td.uid());
+  task_sent_perf_stats_.erase(td.uid());
   if (FLAGS_use_storage_resource_monitoring) {
     boost::unique_lock<boost::shared_mutex> disk_tracker_lock(
         task_disk_tracker_map_mutex_);
@@ -599,9 +602,10 @@ void LocalExecutor::CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeat
 }
 
 TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
-  boost::unique_lock<boost::shared_mutex> heartbeat_lock(task_heartbeat_sequence_numbers_map_mutex_);
+  boost::unique_lock<boost::shared_mutex> heartbeat_lock(task_heartbeat_update_map_mutex_);
   boost::unique_lock<boost::shared_mutex> container_names_lock(task_container_names_map_mutex_);
-  uint64_t* heartbeat_sequence_number_ptr = FindOrNull(task_heartbeat_sequence_numbers_, task_id);
+  uint64_t* heartbeat_sequence_number_ptr =
+      FindOrNull(task_heartbeat_sequence_numbers_, task_id);
   string* container_name = FindOrNull(task_container_names_, task_id);
   uint64_t heartbeat_sequence_number = 0;
   if (heartbeat_sequence_number_ptr) {
@@ -619,28 +623,33 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
     ResourceVector usage = ContainerMonitorUtils::CreateResourceVector(
         FLAGS_container_monitor_port, monitor_host, *container_name);
 
-    if (usage.has_ram_cap() || usage.has_disk_bw()) {
+    bool* sent_perf_stats = FindOrNull(task_sent_perf_stats_, task_id);
+    if ((usage.has_ram_cap() && usage.has_disk_bw())
+        || (sent_perf_stats && *sent_perf_stats)) {
       TaskPerfStatisticsSample stats;
       stats.set_task_id(task_id);
       stats.set_timestamp(GetCurrentTimestamp());
-      ResourceVector* stats_usage = stats.mutable_resources();
-      stats_usage->CopyFrom(usage);
+      if (usage.has_ram_cap() && usage.has_disk_bw()) {
+        ResourceVector* stats_usage = stats.mutable_resources();
+        stats_usage->CopyFrom(usage);
 
-      if (FLAGS_use_storage_resource_monitoring) {
-        {
-          boost::unique_lock<boost::shared_mutex> disk_tracker_lock(
-              task_disk_tracker_map_mutex_);
-          ContainerDiskUsageTracker* task_disk_tracker =
-              FindOrNull(task_disk_trackers_, task_id);
-          CHECK_NOTNULL(task_disk_tracker);
+        if (FLAGS_use_storage_resource_monitoring) {
+          {
+            boost::unique_lock<boost::shared_mutex> disk_tracker_lock(
+                task_disk_tracker_map_mutex_);
+            ContainerDiskUsageTracker* task_disk_tracker =
+                FindOrNull(task_disk_trackers_, task_id);
+            CHECK_NOTNULL(task_disk_tracker);
 
-          if (task_disk_tracker->IsInitialized()) {
-            stats_usage->set_disk_cap(task_disk_tracker->GetFullDiskUsage() / BYTES_TO_MB);
+            if (task_disk_tracker->IsInitialized()) {
+              stats_usage->set_disk_cap(task_disk_tracker->GetFullDiskUsage() / BYTES_TO_MB);
+            }
           }
+          UpdateTaskDiskTrackerAsync(task_id);
         }
-        UpdateTaskDiskTrackerAsync(task_id);
       }
       task_heartbeat.mutable_stats()->CopyFrom(stats);
+      InsertOrUpdate(&task_sent_perf_stats_, task_id, true);
     }
   }
   InsertOrUpdate(&task_heartbeat_sequence_numbers_, task_id, heartbeat_sequence_number);

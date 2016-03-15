@@ -140,7 +140,7 @@ class LocalExecutor : public ExecutorInterface {
   boost::shared_mutex task_finalize_message_map_mutex_;
   boost::shared_mutex task_container_names_map_mutex_;
   boost::shared_mutex task_disk_tracker_map_mutex_;
-  boost::shared_mutex task_heartbeat_sequence_numbers_map_mutex_;
+  boost::shared_mutex task_heartbeat_update_map_mutex_;
   boost::condition_variable exec_condvar_;
   // Map to each task's local handler thread
   unordered_map<TaskID_t, boost::thread*> task_handler_threads_;
@@ -152,6 +152,7 @@ class LocalExecutor : public ExecutorInterface {
   unordered_map<TaskID_t, string> task_container_names_;
   unordered_map<TaskID_t, ContainerDiskUsageTracker> task_disk_trackers_;
   unordered_map<TaskID_t, uint64_t> task_heartbeat_sequence_numbers_;
+  unordered_map<TaskID_t, bool> task_sent_perf_stats_;
 };
 
 }  // namespace executor
