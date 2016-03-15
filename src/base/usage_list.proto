@@ -1,0 +1,12 @@
+package firmament;
+
+import "base/task_usage_record.proto";
+
+message UsageList {
+  required uint64 timeslice_duration_ms = 1;
+  required string machine_id = 2;
+  repeated TaskUsageRecord usage_records = 3;
+  repeated uint64 equivalence_class = 4;
+  optional uint64 matched_equivalence_classes = 5 [default = 0];
+  optional double distance = 6;
+}

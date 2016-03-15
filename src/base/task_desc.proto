@@ -3,6 +3,7 @@ package firmament;
 import "base/reference_desc.proto";
 import "base/resource_vector.proto";
 import "base/task_final_report.proto";
+import "base/usage_list.proto";
 
 message TaskDescriptor {
   enum TaskState {
@@ -67,4 +68,6 @@ message TaskDescriptor {
   optional TaskFinalReport final_report = 27;
   /* Reservations for the resources that the task may use */
   optional ResourceVector resource_reservations = 28;
+  /* Recorded resource usages for tasks with similar resource requests */
+  repeated UsageList similar_resource_request_usage_lists = 29;
 }
