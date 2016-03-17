@@ -47,4 +47,16 @@ bool ContainerDiskUsageTracker::IsInitialized() {
   return is_initialized_;
 }
 
+uint64_t ContainerDiskUsageTracker::UpdateDiskIOUsage(uint64_t new_usage) {
+  uint64_t old_usage = disk_io_usage;
+  disk_io_usage = new_usage;
+  return disk_io_usage - old_usage;
+}
+
+uint64_t ContainerDiskUsageTracker::UpdateDiskIOTime(uint64_t new_time) {
+  uint64_t old_time = disk_io_time_ns;
+  disk_io_time_ns = new_time;
+  return disk_io_time_ns - old_time;
+}
+
 }  // namespace firmament

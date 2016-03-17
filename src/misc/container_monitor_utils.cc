@@ -54,7 +54,9 @@ string ContainerMonitorUtils::GetHttpResponse(string url) {
 }
 
 
-ResourceVector ContainerMonitorUtils::CreateResourceVector(string json_input, string task_container_name) {
+ResourceVector ContainerMonitorUtils::CreateResourceVector(
+    string json_input, string task_container_name,
+    ContainerDiskUsageTracker* disk_tracker) {
   ResourceVector resource_vector;
   string parse_fail_message = "Couldn't parse cAdvisor response";
 
@@ -140,6 +142,11 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(string json_input, st
     }
   }
 
+  if (disk_tracker) {
+    total_disk_usage = disk_tracker->UpdateDiskIOUsage(total_disk_usage);
+    total_disk_time_ns = disk_tracker->UpdateDiskIOTime(total_disk_time_ns);
+  }
+
   uint64_t disk_bw_value = total_disk_time_ns > 0
       ? total_disk_usage / (total_disk_time_ns / SECONDS_TO_NANOSECONDS)
       : 0;
@@ -148,15 +155,27 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(string json_input, st
   return resource_vector;
 }
 
-ResourceVector ContainerMonitorUtils::CreateResourceVector(int port,
-                                                  string container_monitor_host,
-                                                  string task_container_name) {
+ResourceVector ContainerMonitorUtils::CreateResourceVector(
+    int port,
+    string container_monitor_host,
+    string task_container_name) {
+  return CreateResourceVector(port, container_monitor_host, task_container_name,
+                              NULL);
+}
+
+ResourceVector ContainerMonitorUtils::CreateResourceVector(
+    int port,
+    string container_monitor_host,
+    string task_container_name,
+    ContainerDiskUsageTracker* disk_tracker) {
   task_container_name = "/lxc/" + task_container_name;
   string url = container_monitor_host + ":" + to_string(port) +
       "/api/v2.0/stats" + task_container_name;
   ResourceVector resource_vector;
   try {
-    resource_vector = CreateResourceVector(GetHttpResponse(url), task_container_name);
+    resource_vector = CreateResourceVector(GetHttpResponse(url),
+                                           task_container_name,
+                                           disk_tracker);
   } catch (string message) {
     LOG(ERROR) << message;
   }
