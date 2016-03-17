@@ -8,11 +8,12 @@ namespace firmament {
 
 class TaskReservationDecayData {
   public:
-    uint32_t median_timeslice_duration_ms;
-    ResourceVector last_usage_measurement;
-    bool usage_measured;
+    uint32_t median_timeslice_duration_ms = 0;
+    ResourceVector last_usage_calculated;
+    bool usage_measured = false;
     ResourceVector last_usage_estimate;
-    double usage_estimate_accuracy_rating;
+    bool usage_estimated = false;
+    double usage_estimate_accuracy_rating = 0;
 };
 
 } // namespace firmament
