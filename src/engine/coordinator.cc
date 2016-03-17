@@ -444,23 +444,29 @@ void Coordinator::FreeResources(ResourceVector resources_to_free) {
 }
 
 void Coordinator::PullTaskMessages() {
+  uint64_t last_pull_time = 0;
   while (true) {
-    usleep(FLAGS_heartbeat_interval);
-    VLOG(1) << "Pulling messages from tasks";
+    uint64_t cur_time = GetCurrentTimestamp();
+    if (cur_time - last_pull_time > FLAGS_heartbeat_interval) {
+      VLOG(1) << "Pulling messages from tasks";
 
-    vector<TaskStateMessage> states = scheduler_->CreateTaskStateChanges();
-    for (vector<TaskStateMessage>::iterator it = states.begin();
-         it != states.end();
-         ++it) {
-      HandleTaskStateChange(*it);
-    }
+      vector<TaskStateMessage> states = scheduler_->CreateTaskStateChanges();
+      for (vector<TaskStateMessage>::iterator it = states.begin();
+           it != states.end();
+           ++it) {
+        HandleTaskStateChange(*it);
+      }
 
-    vector<TaskHeartbeatMessage> heartbeats = scheduler_->CreateTaskHeartbeats();
-    for (vector<TaskHeartbeatMessage>::iterator it = heartbeats.begin();
-         it != heartbeats.end();
-         ++it) {
-      HandleTaskHeartbeat(*it);
+      vector<TaskHeartbeatMessage> heartbeats =
+          scheduler_->CreateTaskHeartbeats();
+      for (vector<TaskHeartbeatMessage>::iterator it = heartbeats.begin();
+           it != heartbeats.end();
+           ++it) {
+        HandleTaskHeartbeat(*it);
+      }
+      last_pull_time = cur_time;
     }
+    usleep(10);
   }
 }
 

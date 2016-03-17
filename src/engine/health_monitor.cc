@@ -25,11 +25,17 @@ HealthMonitor::HealthMonitor() {
 
 void HealthMonitor::Run(SchedulerInterface* scheduler,
                         shared_ptr<ResourceMap_t> resources) {
+  uint64_t last_monitor_time = 0;
+  uint64_t check_frequency = FLAGS_health_monitor_check_frequency;
   while (FLAGS_health_monitor_enable) {
-    usleep(FLAGS_health_monitor_check_frequency);
-    VLOG(1) << "Health monitor checking on things...";
-    scheduler->CheckRunningTasksHealth();
-    scheduler->UpdateTaskResourceReservations();
+    uint64_t cur_time = GetCurrentTimestamp();
+    if (cur_time - last_monitor_time > check_frequency) {
+        VLOG(1) << "Health monitor checking on things...";
+        scheduler->CheckRunningTasksHealth();
+        scheduler->UpdateTaskResourceReservations();
+        last_monitor_time = cur_time;
+    }
+    usleep(10);
   }
 }
 
