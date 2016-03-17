@@ -574,7 +574,7 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
 
   ShutdownContainerIfRunning(task_id);
 
-  return res != -1 ? 0 : res;
+  return res == -1 ? 100 : res;
 }
 
 string LocalExecutor::CreateMountConfigEntry(string dir) {
