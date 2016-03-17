@@ -19,6 +19,7 @@ class ContainerDiskUsageTracker {
     bool IsInitialized();
     uint64_t UpdateDiskIOUsage(uint64_t new_usage);
     uint64_t UpdateDiskIOTime(uint64_t new_time);
+    uint64_t UpdateDiskIOCheckTime(uint64_t new_time);
 
   protected:
     uint64_t CalculateDirSize(string dir);
@@ -28,6 +29,7 @@ class ContainerDiskUsageTracker {
     uint64_t delta0_size_ = 0;
     uint64_t disk_io_usage = 0;
     uint64_t disk_io_time_ns = 0;
+    uint64_t last_disk_io_check_time = 0;
     string base_dir_;
     const string lower_dir_ = "rootfs";
     const string upper_dir_ = "delta0";

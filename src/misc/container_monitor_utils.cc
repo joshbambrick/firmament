@@ -114,7 +114,7 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(
   // TODO(Josh): consider tracking difference in bytes and time between runs
   // the current solution considers mean disk bandwidth over entire execution
   // alternatively, could sample over the last n readings, or the last t time
-  uint64_t total_disk_usage = 0;
+  uint64_t total_disk_usage_bytes = 0;
   uint64_t total_disk_time_ns = 0;
   if (json_is_true(has_diskio)) {
     json_t* diskio = json_object_get(latest_event, "diskio");
@@ -126,7 +126,7 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(
         json_t* cur_group = json_array_get(io_service_bytes, i);
         json_t* cur_disk_stats = json_object_get(cur_group, "stats");
         json_t* cur_disk_usage = json_object_get(cur_disk_stats, "Total");
-        total_disk_usage += json_integer_value(cur_disk_usage);
+        total_disk_usage_bytes += json_integer_value(cur_disk_usage);
       }
     }
 
@@ -142,14 +142,28 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(
     }
   }
 
+  uint64_t total_disk_time_us = 0;
   if (disk_tracker) {
-    total_disk_usage = disk_tracker->UpdateDiskIOUsage(total_disk_usage);
-    total_disk_time_ns = disk_tracker->UpdateDiskIOTime(total_disk_time_ns);
+    total_disk_usage_bytes =
+        disk_tracker->UpdateDiskIOUsage(total_disk_usage_bytes);
+    uint64_t time_since_last_check = disk_tracker->UpdateDiskIOCheckTime(
+        GetCurrentTimestamp());
+    if (total_disk_time_ns != 0) {
+      total_disk_time_ns = disk_tracker->UpdateDiskIOTime(total_disk_time_ns);
+      total_disk_time_us = total_disk_time_ns / SECONDS_TO_MICROSECONDS;
+    } else {
+      total_disk_time_us = time_since_last_check;
+    }
+  } else {
+    total_disk_time_us = total_disk_time_ns / SECONDS_TO_MICROSECONDS;
   }
 
-  uint64_t disk_bw_value = total_disk_time_ns > 0
-      ? total_disk_usage / (total_disk_time_ns / SECONDS_TO_NANOSECONDS)
+  uint64_t total_disk_usage_bits = total_disk_usage_bytes * 8;
+
+  uint64_t disk_bw_value = (total_disk_time_us > 0)
+      ? ((total_disk_usage_bits * SECONDS_TO_MICROSECONDS) / total_disk_time_us)
       : 0;
+
   resource_vector.set_disk_bw(disk_bw_value);
 
   return resource_vector;

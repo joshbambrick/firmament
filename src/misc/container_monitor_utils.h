@@ -5,6 +5,7 @@
 
 #include "base/common.h"
 #include "base/resource_vector.pb.h"
+#include "misc/utils.h"
 #include "misc/container_disk_usage_tracker.h"
 using std::string;
 

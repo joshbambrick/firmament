@@ -59,4 +59,13 @@ uint64_t ContainerDiskUsageTracker::UpdateDiskIOTime(uint64_t new_time) {
   return disk_io_time_ns - old_time;
 }
 
+uint64_t ContainerDiskUsageTracker::UpdateDiskIOCheckTime(uint64_t new_time) {
+  uint64_t last_time = last_disk_io_check_time;
+  if (last_disk_io_check_time == 0) {
+    last_time = new_time;
+  }
+  last_disk_io_check_time = new_time;
+  return new_time - last_time;
+}
+
 }  // namespace firmament
