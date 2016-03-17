@@ -14,6 +14,9 @@
 
 #include "base/common.h"
 #include "base/types.h"
+#include "base/resource_vector.pb.h"
+#include "base/usage_list.pb.h"
+#include "base/task_usage_record.pb.h"
 #include "misc/map-util.h"
 #include "misc/utils.h"
 #include "misc/string_utils.h"
@@ -22,6 +25,10 @@
 #include "scheduling/flow/cost_models.h"
 #include "scheduling/flow/cost_model_interface.h"
 #include "scheduling/flow/sim/simulated_quincy_factory.h"
+
+// these are defined in event_driven_scheduler
+DECLARE_bool(track_similar_resource_request_usage);
+DECLARE_bool(track_same_ec_task_resource_usage);
 
 DEFINE_int32(flow_scheduling_cost_model, 0,
              "Flow scheduler cost model to use. "
@@ -191,6 +198,7 @@ void FlowScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
   if (!td_ptr->has_delegated_from()) {
     flow_graph_manager_->TaskCompleted(td_ptr->uid());
   }
+
   // Call into superclass handler
   EventDrivenScheduler::HandleTaskCompletion(td_ptr, report);
 }
@@ -213,9 +221,50 @@ void FlowScheduler::HandleTaskFinalReport(const TaskFinalReport& report,
                                           TaskDescriptor* td_ptr) {
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
   TaskID_t task_id = td_ptr->uid();
+  TaskFinalReport extended_report(report);
   vector<EquivClass_t>* equiv_classes =
     cost_model_->GetTaskEquivClasses(task_id);
-  knowledge_base_->ProcessTaskFinalReport(*equiv_classes, report);
+
+  if (extended_report.has_usage_list()
+      && extended_report.usage_list().equivalence_class_size() == 0
+      && equiv_classes->size() > 0) {
+    UsageList* usage_list = extended_report.mutable_usage_list();
+    for (auto& equiv_class : *equiv_classes) {
+      usage_list->add_equivalence_class(equiv_class);
+    }
+  }
+
+  knowledge_base_->ProcessTaskFinalReport(*equiv_classes, extended_report);
+  if (FLAGS_track_similar_resource_request_usage && report.has_usage_list()) {
+    const UsageList usage_list = report.usage_list();
+    uint64_t number_of_usage_records = static_cast<uint64_t>(
+        usage_list.usage_records_size());
+    vector<UsageRecord> copied_usage_records;
+    for (uint64_t i = 0;
+         i < number_of_usage_records;
+         ++i) {
+      const TaskUsageRecord record = usage_list.usage_records(i);
+      UsageRecord new_record(record.is_valid(),
+                             record.ram_cap(),
+                             record.disk_bw(),
+                             record.disk_cap());
+
+      copied_usage_records.push_back(new_record);
+    }
+
+    const ResourceVector& request = td_ptr->resource_request();
+    Request usage_request(request.ram_cap(),
+                          request.disk_bw(),
+                          request.disk_cap());
+
+    UsageRecordList task_usage_records(
+        copied_usage_records,
+        *equiv_classes,
+        usage_list.timeslice_duration_ms(),
+        ResourceIDFromString(usage_list.machine_id()),
+        usage_request);
+    similar_resource_request_usages_.AddToTree(task_usage_records);
+  }
   delete equiv_classes;
   EventDrivenScheduler::HandleTaskFinalReport(report, td_ptr);
 }
@@ -239,6 +288,73 @@ void FlowScheduler::HandleTaskPlacement(TaskDescriptor* td_ptr,
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
   flow_graph_manager_->TaskScheduled(td_ptr->uid(),
                                      ResourceIDFromString(rd_ptr->uuid()));
+  vector<EquivClass_t>* equiv_classes =
+        cost_model_->GetTaskEquivClasses(td_ptr->uid());
+  unordered_set<EquivClass_t> equiv_class_set(equiv_classes->begin(),
+                                              equiv_classes->end());
+  if (FLAGS_track_similar_resource_request_usage) {
+    // Determine the usage records of nearest requests
+    Request request(td_ptr->resource_request().ram_cap(),
+                    td_ptr->resource_request().disk_bw(),
+                    td_ptr->resource_request().disk_cap());
+    vector<ComparedUsageRecordList> record_lists;
+    similar_resource_request_usages_.LookUpTree(request, &record_lists);
+    // Add the usage records to the task descriptor
+    for (auto& record_list : record_lists) {
+      UsageList* usage_list =
+          td_ptr->add_similar_resource_request_usage_lists();
+      usage_list->set_distance(record_list.distance);
+      usage_list->set_timeslice_duration_ms(record_list.timeslice_duration_ms);
+      for (auto& equiv_class : record_list.equivalence_classes) {
+        usage_list->add_equivalence_class(equiv_class);
+        if (equiv_class_set.find(equiv_class) != equiv_class_set.end()) {
+          usage_list->set_matched_equivalence_classes(
+              usage_list->matched_equivalence_classes() + 1);
+        }
+      }
+
+      usage_list->set_machine_id(to_string(record_list.machine_id));
+      vector<UsageRecord> records(record_list.record_list);
+      for (auto& usage_record : records) {
+        TaskUsageRecord* new_record = usage_list->add_usage_records();
+        new_record->set_is_valid(usage_record.is_valid);
+        new_record->set_ram_cap(usage_record.usage_ram_cap);
+        new_record->set_disk_bw(usage_record.usage_disk_bw);
+        new_record->set_disk_cap(usage_record.usage_disk_cap);
+      }
+    }
+  } else if (FLAGS_track_same_ec_task_resource_usage) {
+    // Create map of reports to the task's equivalence classes
+    map<const TaskFinalReport*, vector<EquivClass_t>> final_report_classes;
+    for (auto& equiv_class : equiv_class_set) {
+      const deque<TaskFinalReport>* final_reports =
+          knowledge_base()->GetFinalReportsForTEC(equiv_class);
+      for (auto& final_report : *final_reports) {
+        map<const TaskFinalReport*, vector<EquivClass_t>>::iterator it =
+            final_report_classes.find(&final_report);
+        if (it == final_report_classes.end()) {
+          final_report_classes[&final_report] =
+              vector<EquivClass_t>(equiv_class);
+        } else {
+          it->second.push_back(equiv_class);
+        }
+      }
+    }
+    // Create a usage list for each report's usages
+    for (auto& final_report_class : final_report_classes) {
+      UsageList* usage_list =
+          td_ptr->add_similar_resource_request_usage_lists();
+      usage_list->CopyFrom(final_report_class.first->usage_list());
+      for (auto& equiv_class : final_report_class.second) {
+        usage_list->add_equivalence_class(equiv_class);
+        if (equiv_class_set.find(equiv_class) != equiv_class_set.end()) {
+          usage_list->set_matched_equivalence_classes(
+              usage_list->matched_equivalence_classes() + 1);
+        }
+      }
+    }
+  }
+
   EventDrivenScheduler::HandleTaskPlacement(td_ptr, rd_ptr);
 }
 
