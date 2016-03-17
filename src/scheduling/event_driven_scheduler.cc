@@ -423,7 +423,7 @@ void EventDrivenScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
       vector<uint32_t> max_usage_indices;
       if (FLAGS_track_similar_task_usage_timeslices) {
         if (FLAGS_tracked_usage_fixed_timeslices == -1) {
-          for (uint32_t i = 0; i < usage_records.size(); ++i) {
+          for (uint32_t i = 0; i < valid_usage_records.size(); ++i) {
             min_usage_indices.push_back(i);
             max_usage_indices.push_back(i);
           }
@@ -443,9 +443,9 @@ void EventDrivenScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
                     absolute_max_index));
           }
         }
-      } else {
+      } else if (valid_usage_records.size() > 0) {
         min_usage_indices.push_back(0);
-        max_usage_indices.push_back(usage_records.size() - 1);
+        max_usage_indices.push_back(valid_usage_records.size() - 1);
       }
 
       // Look create a median record of each timeslice
