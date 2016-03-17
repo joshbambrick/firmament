@@ -71,6 +71,9 @@ DEFINE_double(task_similarity_equiv_class_weight_dropoff, 0.5, "Dropoff "
               "affecting how much additional matching equivalence classes "
               "increases the similarity of tasks");
 
+DEFINE_double(usage_averaging_coeff, -1, "Coefficient used to exponentially "
+              "average new usage measurements, applied to new measurement");
+
 DEFINE_int64(task_fail_timeout, 60, "Time (in seconds) after which to declare "
              "a task as failed if it has not sent heartbeats");
 
@@ -1190,7 +1193,16 @@ void EventDrivenScheduler::DetermineCurrentTaskUsage(
     const ResourceVector& measured_usage,
     const ResourceVector& prev_usage,
     ResourceVector* current_usage) {
-  current_usage->CopyFrom(measured_usage);
+  if (FLAGS_usage_averaging_coeff == -1
+      || !FLAGS_track_similar_resource_request_usage) {
+    current_usage->CopyFrom(measured_usage);
+  } else {
+    CHECK_GT(FLAGS_usage_averaging_coeff, 0);
+    DetermineWeightedAverage(
+        {measured_usage, prev_usage},
+        {FLAGS_usage_averaging_coeff, 1 - FLAGS_usage_averaging_coeff},
+        current_usage);
+  }
 }
 
 void EventDrivenScheduler::ClearTaskResourceReservations(TaskID_t task_id) {
