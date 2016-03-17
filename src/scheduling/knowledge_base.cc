@@ -25,6 +25,9 @@ DEFINE_string(serial_machine_samples, "serial_machine_samples",
 DEFINE_string(serial_task_samples, "serial_task_samples",
               "Path to the file where the knowledge base will serialize task"
               " specific information");
+DEFINE_bool(limit_task_stats, true,
+            "True if we should limit the number of stat samples stored per "
+            "task");
 
 namespace firmament {
 
@@ -99,7 +102,7 @@ void KnowledgeBase::AddTaskSample(const TaskPerfStatisticsSample& sample) {
     q = FindOrNull(task_map_, tid);
     CHECK_NOTNULL(q);
   }
-  if (q->size() * sizeof(sample) >= 1 * MB_TO_BYTES)
+  if (q->size() * sizeof(sample) >= 1 * MB_TO_BYTES && FLAGS_limit_task_stats)
     q->pop_front();  // drop from the front
   q->push_back(sample);
   if (FLAGS_serialize_knowledge_base) {
