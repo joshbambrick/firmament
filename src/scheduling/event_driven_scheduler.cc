@@ -57,7 +57,7 @@ DEFINE_double(similar_resource_tree_rebuild_threshhold, 2, "Size of new tree"
 DEFINE_int32(similar_resource_max_tracked_tasks, 16384, "Max number of tasks"
              "to track the usage of, for similar request queries");
 
-DEFINE_bool(track_similar_task_usage_timeslices, true, "Should use similar "
+DEFINE_bool(track_similar_task_usage_timeslices, false, "Should use similar "
             "task timeslices to decay resource reservations");
 
 DEFINE_int64(tracked_usage_fixed_timeslices, -1, "How many timeslices to "
