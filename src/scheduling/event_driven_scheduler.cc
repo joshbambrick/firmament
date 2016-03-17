@@ -15,16 +15,61 @@
 
 #include "base/units.h"
 #include "misc/map-util.h"
+#include "base/usage_list.pb.h"
+#include "base/task_usage_record.pb.h"
 #include "misc/utils.h"
 #include "engine/executors/local_executor.h"
 #include "engine/executors/remote_executor.h"
 #include "engine/executors/simulated_executor.h"
+#include "engine/request_usages/request.h"
+#include "engine/request_usages/usage_record.h"
+#include "engine/request_usages/usage_record_list.h"
+#include "engine/request_usages/compared_usage_record_list.h"
 #include "messages/task_heartbeat_message.pb.h"
 #include "messages/task_state_message.pb.h"
 #include "scheduling/knowledge_base.h"
+#include "scheduling/flow/flow_scheduler.h"
 #include "storage/object_store_interface.h"
 #include "storage/reference_types.h"
 #include "storage/reference_utils.h"
+
+DEFINE_uint64(heartbeat_interval, 1000000,
+              "Heartbeat interval in microseconds.");
+
+DEFINE_bool(track_same_ec_task_resource_usage, false, "Should track resource "
+            "usage of tasks, for searches by equivalence class");
+
+DEFINE_bool(track_similar_resource_request_usage, false, "Should track "
+            "resource usage of tasks, for searches by similar request");
+
+DEFINE_uint64(resource_usage_percentile, 90, "What percentile of resource "
+             "usage is safe for estimating other task resource usages");
+
+DEFINE_int32(similar_resource_neighbour_count, 8, "Number of neighbour to "
+             "consider, if tracking their resource usages");
+
+DEFINE_double(similar_resource_error_bound, 0.1, "Error to permit in finding"
+              "neighbour distance, if tracking their resource usages");
+
+DEFINE_double(similar_resource_tree_rebuild_threshhold, 2, "Size of new tree"
+              "relative to current, after which to rebuild the tree");
+
+DEFINE_int32(similar_resource_max_tracked_tasks, 16384, "Max number of tasks"
+             "to track the usage of, for similar request queries");
+
+DEFINE_bool(track_similar_task_usage_timeslices, true, "Should use similar "
+            "task timeslices to decay resource reservations");
+
+DEFINE_int64(tracked_usage_fixed_timeslices, -1, "How many timeslices to "
+             "assign each task, if you want this to be fixed.");
+
+DEFINE_double(task_similarity_request_distance_weight_dropoff, 0.05, "Dropoff "
+              "affecting how much additional resource request distance "
+              "decreases the similarity of tasks");
+
+DEFINE_double(task_similarity_equiv_class_weight_dropoff, 0.5, "Dropoff "
+              "affecting how much additional matching equivalence classes "
+              "increases the similarity of tasks");
 
 DEFINE_int64(task_fail_timeout, 60, "Time (in seconds) after which to declare "
              "a task as failed if it has not sent heartbeats");
@@ -64,7 +109,12 @@ EventDrivenScheduler::EventDrivenScheduler(
       coordinator_res_id_(coordinator_res_id),
       event_notifier_(event_notifier),
       m_adapter_ptr_(m_adapter),
-      topology_manager_(topo_mgr) {
+      topology_manager_(topo_mgr),
+      similar_resource_request_usages_(
+          FLAGS_similar_resource_neighbour_count,
+          FLAGS_similar_resource_error_bound,
+          FLAGS_similar_resource_tree_rebuild_threshhold,
+          FLAGS_similar_resource_max_tracked_tasks) {
   VLOG(1) << "EventDrivenScheduler initiated.";
 }
 
@@ -173,8 +223,45 @@ void EventDrivenScheduler::DeregisterResource(ResourceID_t res_id) {
 void EventDrivenScheduler::ExecuteTask(TaskDescriptor* td_ptr,
                                        ResourceDescriptor* rd_ptr) {
   TaskID_t task_id = td_ptr->uid();
+
+  TaskReservationDecayData base_decay_data;
+  CHECK(InsertIfNotPresent(&task_reservation_decay_data_, td_ptr->uid(),
+                           base_decay_data));
+  TaskReservationDecayData* decay_data = FindOrNull(
+      task_reservation_decay_data_,
+      td_ptr->uid());
+  CHECK_NOTNULL(decay_data);
+
   // Initialize resource reservations
   td_ptr->mutable_resource_reservations()->CopyFrom(td_ptr->resource_request());
+  if (td_ptr->similar_resource_request_usage_lists_size()
+      && (FLAGS_track_same_ec_task_resource_usage
+          || FLAGS_track_similar_resource_request_usage)) {
+    vector<uint64_t> timeslice_durations_ms;
+    for (uint32_t i = 0;
+         i < static_cast<uint32_t>(
+             td_ptr->similar_resource_request_usage_lists_size());
+         ++i) {
+      UsageList usage_list = td_ptr->similar_resource_request_usage_lists(i);
+      timeslice_durations_ms.push_back(usage_list.timeslice_duration_ms());
+    }
+    CHECK_NOTNULL(decay_data);
+    decay_data->median_timeslice_duration_ms =
+        GetPercentile(timeslice_durations_ms, 50);
+
+    ResourceVector usage_estimate;
+    bool usage_estimated = EstimateTaskResourceUsageFromSimilarTasks(
+        td_ptr, 0, ResourceIDFromString(rd_ptr->uuid()),
+        &usage_estimate);
+    if (usage_estimated) {
+      CalculateReservationsFromUsage(usage_estimate,
+                                     usage_estimate,
+                                     td_ptr->resource_request(),
+                                     FLAGS_reservation_increment,
+                                     td_ptr->mutable_resource_reservations());
+    }
+  }
+
   ResourceID_t res_id = ResourceIDFromString(rd_ptr->uuid());
   ResourceVector empty_resource_reservations;
   UpdateMachineReservations(res_id, &empty_resource_reservations,
@@ -262,6 +349,7 @@ void EventDrivenScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
   // This copy is necessary because UnbindTaskFromResource ends up deleting the
   // ResourceID_t pointed to by res_id_ptr
   ResourceID_t res_id_tmp = *res_id_ptr;
+  ResourceID_t machine_res_id_tmp = MachineResIDForResource(res_id_tmp);
   ResourceStatus* rs_ptr = FindPtrOrNull(*resource_map_, res_id_tmp);
   CHECK_NOTNULL(rs_ptr);
   VLOG(1) << "Handling completion of task " << td_ptr->uid()
@@ -271,6 +359,102 @@ void EventDrivenScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
   ExecutorInterface* exec = FindPtrOrNull(executors_, res_id_tmp);
   CHECK_NOTNULL(exec);
   exec->HandleTaskCompletion(td_ptr, report);
+  if (!report->has_usage_list()) {
+    const deque<TaskPerfStatisticsSample>* task_stats =
+        knowledge_base()->GetStatsForTask(td_ptr->uid());
+    if (task_stats && task_stats->size() > 0) {
+      UsageList* usage_list = report->mutable_usage_list();
+
+      if (FLAGS_track_similar_task_usage_timeslices) {
+        if (FLAGS_tracked_usage_fixed_timeslices == -1) {
+          usage_list->set_timeslice_duration_ms(
+              FLAGS_heartbeat_interval / MILLISECONDS_TO_MICROSECONDS);
+        } else {
+          CHECK_GT(FLAGS_tracked_usage_fixed_timeslices, 0);
+          // TODO(Josh): Check that this calculation is correct
+          usage_list->set_timeslice_duration_ms(
+              (FLAGS_heartbeat_interval / MILLISECONDS_TO_MICROSECONDS)
+              * task_stats->size()
+              / FLAGS_tracked_usage_fixed_timeslices);
+        }
+      } else {
+        usage_list->set_timeslice_duration_ms(0);
+      }
+      usage_list->set_machine_id(to_string(machine_res_id_tmp));
+
+      // Create vector of task usages
+      vector<TaskUsageRecord> usage_records;
+      vector<TaskUsageRecord> valid_usage_records;
+      for (auto& stats : *task_stats) {
+        TaskUsageRecord new_record;
+        // The first item in task stats always has resources
+        if (stats.has_resources()) {
+          new_record.set_is_valid(true);
+          new_record.set_ram_cap(stats.resources().ram_cap());
+          new_record.set_disk_bw(stats.resources().disk_bw());
+          new_record.set_disk_cap(stats.resources().disk_cap());
+        } else {
+          new_record.set_is_valid(false);
+          new_record.set_ram_cap(0);
+          new_record.set_disk_bw(0);
+          new_record.set_disk_cap(0);
+        }
+        usage_records.push_back(new_record);
+        if (stats.has_resources()) {
+          valid_usage_records.push_back(usage_records.back());
+        }
+      }
+
+      // TODO(Josh): fix issue of indices referring to all records, but only
+      // looking up valid (perhaps just shift the start, or spread them
+      // proportionally to each vector's size) -- current solution is just to
+      // set max to valid_usage_records size (assumes invalid are unlikely)
+
+      // Indices of list of usages to add to the record
+      vector<uint32_t> min_usage_indices;
+      vector<uint32_t> max_usage_indices;
+      if (FLAGS_track_similar_task_usage_timeslices) {
+        if (FLAGS_tracked_usage_fixed_timeslices == -1) {
+          for (uint32_t i = 0; i < usage_records.size(); ++i) {
+            min_usage_indices.push_back(i);
+            max_usage_indices.push_back(i);
+          }
+        } else {
+          CHECK_GT(FLAGS_tracked_usage_fixed_timeslices, 0);
+          double record_timeslice_ratio =
+              static_cast<double>(usage_records.size())
+              / static_cast<double>(FLAGS_tracked_usage_fixed_timeslices);
+          double absolute_max_index = valid_usage_records.size() - 1;
+          for (uint32_t i = 0; i < FLAGS_tracked_usage_fixed_timeslices; ++i) {
+            // The min and max indices corresponding to this timeslice
+            min_usage_indices.push_back(
+                min(round(i * record_timeslice_ratio), absolute_max_index));
+            max_usage_indices.push_back(
+                min(round((i + 1) * record_timeslice_ratio), absolute_max_index));
+          }
+        }
+      } else {
+        min_usage_indices.push_back(0);
+        max_usage_indices.push_back(usage_records.size() - 1);
+      }
+
+      // Look create a median record of each timeslice
+      CHECK_EQ(min_usage_indices.size(), max_usage_indices.size());
+      for (uint32_t i = 0; i < min_usage_indices.size(); ++i) {
+        CHECK(valid_usage_records.size() > min_usage_indices[i]);
+        CHECK(valid_usage_records.size() > max_usage_indices[i]);
+        TaskUsageRecord median_record;
+        GetPercentileTaskUsageRecord(valid_usage_records,
+                                     min_usage_indices[i], max_usage_indices[i],
+                                     FLAGS_resource_usage_percentile, &median_record);
+        median_record.set_is_valid(true);
+        usage_list->add_usage_records()->CopyFrom(median_record);
+      }
+    }
+  }
+
+  task_reservation_decay_data_.erase(td_ptr->uid());
+
   // Store the final report in the TD for future reference
   td_ptr->mutable_final_report()->CopyFrom(*report);
   if (event_notifier_) {
@@ -288,6 +472,7 @@ void EventDrivenScheduler::HandleTaskAbortion(TaskDescriptor* td_ptr) {
   VLOG(1) << "Handling abortion of task " << td_ptr->uid()
           << ", freeing resource " << *res_id_ptr;
   CHECK(UnbindTaskFromResource(td_ptr, *res_id_ptr));
+  task_reservation_decay_data_.erase(td_ptr->uid());
   if (event_notifier_) {
     event_notifier_->OnTaskCompletion(td_ptr, rs_ptr->mutable_descriptor());
   }
@@ -301,6 +486,7 @@ void EventDrivenScheduler::HandleTaskDelegationFailure(
   ResourceID_t* res_id_ptr = BoundResourceForTask(td_ptr->uid());
   CHECK_NOTNULL(res_id_ptr);
   CHECK(UnbindTaskFromResource(td_ptr, *res_id_ptr));
+  task_reservation_decay_data_.erase(td_ptr->uid());
   }
   ClearTaskDescriptorSchedulingData(td_ptr);
   RescheduleTask(td_ptr);
@@ -314,6 +500,7 @@ void EventDrivenScheduler::HandleTaskEviction(TaskDescriptor* td_ptr,
   VLOG(1) << "Handling completion of task " << td_ptr->uid()
           << ", freeing resource " << res_id;
   CHECK(UnbindTaskFromResource(td_ptr, res_id));
+  task_reservation_decay_data_.erase(td_ptr->uid());
   // Record final report
   ExecutorInterface* exec = FindPtrOrNull(executors_, res_id);
   td_ptr->set_state(TaskDescriptor::RUNNABLE);
@@ -347,6 +534,7 @@ void EventDrivenScheduler::HandleTaskFailure(TaskDescriptor* td_ptr) {
   exec_ptr->HandleTaskFailure(td_ptr);
   // Remove the task's resource binding (as it is no longer currently bound)
   CHECK(UnbindTaskFromResource(td_ptr, res_id_tmp));
+  task_reservation_decay_data_.erase(td_ptr->uid());
   // Set the task to "failed" state and deal with the consequences
   // (The state may already have been changed elsewhere, but since the failure
   // case can arise unexpectedly, we set it again here).
@@ -747,88 +935,262 @@ bool EventDrivenScheduler::UnbindTaskFromResource(TaskDescriptor* td_ptr,
   }
 }
 
+bool EventDrivenScheduler::EstimateTaskResourceUsageFromSimilarTasks(
+    TaskDescriptor* td_ptr,
+    uint32_t timeslice_index,
+    ResourceID_t scheduled_resource,
+    ResourceVector* usage_estimate) {
+  vector<ResourceVector> similar_task_vectors;
+  vector<double> similar_task_weights;
+  bool valid_records_exist = false;
+  double base_weight = 1;
+  double same_machine_weight = 1;
+
+  ResourceID_t machine_res_id = MachineResIDForResource(scheduled_resource);
+
+  uint32_t number_of_usage_lists = static_cast<uint32_t>(
+      td_ptr->similar_resource_request_usage_lists_size());
+  for (uint32_t i = 0; i < number_of_usage_lists; ++i) {
+    UsageList usage_list = td_ptr->similar_resource_request_usage_lists(i);
+    uint32_t number_of_usage_records = static_cast<uint32_t>(
+        usage_list.usage_records_size());
+    if (number_of_usage_records > timeslice_index) {
+      TaskUsageRecord usage_record = usage_list.usage_records(timeslice_index);
+      ResourceVector task_vector;
+      task_vector.set_ram_cap(usage_record.ram_cap());
+      task_vector.set_disk_bw(usage_record.disk_bw());
+      task_vector.set_disk_cap(usage_record.disk_cap());
+      similar_task_vectors.push_back(task_vector);
+      similar_task_weights.push_back(0);
+      if (usage_record.is_valid()) {
+        valid_records_exist = true;
+
+        similar_task_weights[i] += base_weight;
+        if (usage_list.has_distance()) {
+          // Use exponential decay to achieve max weight of 1 at 0
+          similar_task_weights[i] +=
+              exp(-1
+                  * FLAGS_task_similarity_request_distance_weight_dropoff
+                  * usage_list.distance());
+        }
+        if (machine_res_id == ResourceIDFromString(usage_list.machine_id())) {
+          similar_task_weights[i] += same_machine_weight;
+        }
+
+        // Use logistic function to achieve max weight of 1
+        similar_task_weights[i] += ScaleToLogistic(
+            FLAGS_task_similarity_equiv_class_weight_dropoff,
+            usage_list.matched_equivalence_classes());
+      }
+    }
+  }
+
+  if (valid_records_exist) {
+    DetermineWeightedAverage(similar_task_vectors, similar_task_weights,
+                             usage_estimate);
+  }
+  return valid_records_exist;
+}
+
+double EventDrivenScheduler::ScaleToLogistic(double dropoff, double value) {
+  return (2 / (1 + exp(-1 * dropoff * value))) - 1;
+}
+
+void EventDrivenScheduler::DetermineWeightedAverage(
+    const vector<ResourceVector>& resource_vectors,
+    const vector<double>& weights,
+    ResourceVector* weighted_average) {
+  CHECK_EQ(resource_vectors.size(), weights.size());
+  double total_weights = 0;
+
+  for (auto& weight : weights) {
+    total_weights += weight;
+  }
+
+  double sum_ram_cap = 0;
+  double sum_disk_bw = 0;
+  double sum_disk_cap = 0;
+
+  for (uint32_t i = 0; i < resource_vectors.size(); ++i) {
+    double record_weight = weights[i] / total_weights;
+    sum_ram_cap += resource_vectors[i].ram_cap() * record_weight;
+    sum_disk_bw += resource_vectors[i].disk_bw() * record_weight;
+    sum_disk_cap += resource_vectors[i].disk_cap() * record_weight;
+  }
+
+  weighted_average->set_ram_cap(sum_ram_cap);
+  weighted_average->set_disk_bw(sum_disk_bw);
+  weighted_average->set_disk_cap(sum_disk_cap);
+}
+
+void EventDrivenScheduler::CalculateReservationsFromUsage(
+      const ResourceVector& usage,
+      const ResourceVector& safe_usage,
+      const ResourceVector& limit,
+      double reservation_increment,
+      ResourceVector* reservations) {
+  if (usage.has_ram_cap()) {
+    uint64_t usage_ram = usage.ram_cap();
+    uint64_t safe_usage_ram = safe_usage.ram_cap();
+    uint64_t current_reservation_ram = reservations->ram_cap();
+    uint64_t safety_ram =
+        floor((1 + FLAGS_reservation_safety_margin) * safe_usage_ram);
+    uint64_t updated_reservation_ram =
+        (usage_ram > current_reservation_ram)
+            ? usage_ram * FLAGS_reservation_overshoot_boost
+            : current_reservation_ram * reservation_increment;
+    updated_reservation_ram = min(max(updated_reservation_ram,
+                                      safety_ram),
+                                  limit.ram_cap());
+    reservations->set_ram_cap(updated_reservation_ram);
+  }
+
+  if (usage.has_disk_bw()) {
+    uint64_t usage_disk_bw = usage.disk_bw();
+    uint64_t safe_usage_disk_bw = safe_usage.disk_bw();
+    uint64_t current_reservation_disk_bw = reservations->disk_bw();
+    uint64_t safety_disk_bw =
+        floor((1 + FLAGS_reservation_safety_margin) * safe_usage_disk_bw);
+    uint64_t updated_reservation_disk_bw =
+        (usage_disk_bw > current_reservation_disk_bw)
+            ? usage_disk_bw * FLAGS_reservation_overshoot_boost
+            : current_reservation_disk_bw * reservation_increment;
+    updated_reservation_disk_bw = min(max(updated_reservation_disk_bw,
+                                          safety_disk_bw),
+                                      limit.disk_bw());
+    reservations->set_disk_bw(updated_reservation_disk_bw);
+  }
+
+  if (usage.has_disk_cap()) {
+    uint64_t usage_disk_cap = usage.disk_cap();
+    uint64_t safe_usage_disk_cap = safe_usage.disk_cap();
+    uint64_t current_reservation_disk_cap = reservations->disk_cap();
+    uint64_t safety_disk_cap =
+        floor((1 + FLAGS_reservation_safety_margin) * safe_usage_disk_cap);
+    uint64_t updated_reservation_disk_cap =
+        (usage_disk_cap > current_reservation_disk_cap)
+            ? usage_disk_cap * FLAGS_reservation_overshoot_boost
+            : current_reservation_disk_cap * reservation_increment;
+    updated_reservation_disk_cap = min(max(updated_reservation_disk_cap,
+                                          safety_disk_cap),
+                                      limit.disk_cap());
+    reservations->set_disk_cap(updated_reservation_disk_cap);
+  }
+}
+
 void EventDrivenScheduler::UpdateTaskResourceReservations() {
-  for(thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
-          = task_map_->begin();
-      it != task_map_->end(); it++) {
+  for (thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
+           = task_map_->begin();
+       it != task_map_->end(); it++) {
     TaskDescriptor* td_ptr = it->second;
+    TaskID_t task_id = it->first;
 
     if (td_ptr->state() == TaskDescriptor::RUNNING
         && !td_ptr->has_delegated_to()
         && td_ptr->has_scheduled_to_resource()) {
-      TaskID_t task_id = it->first;
       ResourceID_t task_scheduled_res_id =
           ResourceIDFromString(td_ptr->scheduled_to_resource());
-      const TaskPerfStatisticsSample* stats =
+      const TaskPerfStatisticsSample* latest_stats =
           knowledge_base()->GetLatestStatsForTask(task_id);
+      const deque<TaskPerfStatisticsSample>* full_stats =
+          knowledge_base()->GetStatsForTask(task_id);
+      uint32_t number_of_stats = full_stats ? full_stats->size() : 0;
+      TaskReservationDecayData* decay_data = FindOrNull(
+        task_reservation_decay_data_,
+        td_ptr->uid());
+      CHECK_NOTNULL(decay_data);
       ResourceVector* reservations = td_ptr->mutable_resource_reservations();
-      if (reservations && stats && stats->has_resources()) {
-        ResourceVector old_reservations;
-        old_reservations.CopyFrom(td_ptr->resource_reservations());
-        ResourceVector limit = td_ptr->resource_request();
-        bool kill_task = false;
 
-        if (stats->resources().has_ram_cap()) {
-          uint64_t usage_ram = stats->resources().ram_cap();
-          uint64_t current_reservation_ram = reservations->ram_cap();
-          uint64_t updated_reservation_ram = 0;
-          uint64_t safety_ram =
-              floor((1 + FLAGS_reservation_safety_margin) * usage_ram);
-          updated_reservation_ram = (usage_ram > current_reservation_ram)
-              ? usage_ram * FLAGS_reservation_overshoot_boost
-              : current_reservation_ram * FLAGS_reservation_increment;
-          updated_reservation_ram = min(max(updated_reservation_ram,
-                                            safety_ram),
-                                        limit.ram_cap());
-          reservations->set_ram_cap(updated_reservation_ram);
-          kill_task = kill_task || usage_ram > limit.ram_cap();
-        }
-
-        if (stats->resources().has_disk_bw()) {
-          uint64_t usage_disk_bw = stats->resources().disk_bw();
-          uint64_t current_reservation_disk_bw = reservations->disk_bw();
-          uint64_t safety_disk_bw =
-              floor((1 + FLAGS_reservation_safety_margin) * usage_disk_bw);
-          uint64_t updated_reservation_disk_bw =
-              (usage_disk_bw > current_reservation_disk_bw)
-              ? usage_disk_bw * FLAGS_reservation_overshoot_boost
-              : current_reservation_disk_bw * FLAGS_reservation_increment;
-          updated_reservation_disk_bw = min(max(updated_reservation_disk_bw,
-                                                safety_disk_bw),
-                                            limit.disk_bw());
-          reservations->set_disk_bw(updated_reservation_disk_bw);
-          kill_task = kill_task || usage_disk_bw > limit.disk_bw();
-        }
-
-        if (stats->resources().has_disk_cap()) {
-          uint64_t usage_disk_cap = stats->resources().disk_cap();
-          uint64_t current_reservation_disk_cap = reservations->disk_cap();
-          uint64_t safety_disk_cap =
-              floor((1 + FLAGS_reservation_safety_margin) * usage_disk_cap);
-          uint64_t updated_reservation_disk_cap =
-              (usage_disk_cap > current_reservation_disk_cap)
-              ? usage_disk_cap * FLAGS_reservation_overshoot_boost
-              : current_reservation_disk_cap * FLAGS_reservation_increment;
-          updated_reservation_disk_cap = min(max(updated_reservation_disk_cap,
-                                                safety_disk_cap),
-                                            limit.disk_cap());
-          reservations->set_disk_cap(updated_reservation_disk_cap);
-          kill_task = kill_task || usage_disk_cap > limit.disk_cap();
-        }
-
-        UpdateMachineReservations(task_scheduled_res_id,
-                                  &old_reservations,
-                                  reservations);
-
-        if (kill_task) {
+      if (reservations && latest_stats && latest_stats->has_resources()) {
+        const ResourceVector limit = td_ptr->resource_request();
+        const ResourceVector measured_usage = latest_stats->resources();
+        if (measured_usage.ram_cap() > limit.ram_cap()
+            || measured_usage.disk_bw() > limit.disk_bw()
+            || measured_usage.disk_cap() > limit.disk_cap()) {
           ExecutorInterface* exec = FindPtrOrNull(executors_,
                                                   task_scheduled_res_id);
           CHECK_NOTNULL(exec);
           exec->SendAbortMessage(td_ptr);
+        } else {
+          if (decay_data->usage_measured) {
+            DetermineCurrentTaskUsage(measured_usage,
+                                      decay_data->last_usage_calculated,
+                                      &decay_data->last_usage_calculated);
+          } else {
+            decay_data->last_usage_calculated.CopyFrom(measured_usage);
+            decay_data->usage_measured = true;
+          }
+
+          ResourceVector next_timeslice_usage(decay_data->last_usage_calculated);
+
+          // Use the timeslice to estimate next_timeslice_usage better
+          if (FLAGS_track_similar_task_usage_timeslices) {
+            CHECK(FLAGS_track_same_ec_task_resource_usage
+                  || FLAGS_track_similar_resource_request_usage);
+            uint32_t timeslice;
+            if (FLAGS_tracked_usage_fixed_timeslices == -1) {
+              // This is the next timeslice, since timeslices are 0-indexed
+              timeslice = number_of_stats;
+            } else {
+              CHECK_GT(FLAGS_tracked_usage_fixed_timeslices, 0);
+              // TODO(Josh): Check that this calculation is correct
+              // should perhaps actually add on health monitor check frequency
+
+              // TODO(Josh): consider if decay_data->median_timeslice_duration_ms is 0
+              int64_t next_timeslice_index_estimate =
+                  number_of_stats
+                  * (FLAGS_heartbeat_interval / MILLISECONDS_TO_MICROSECONDS)
+                  / decay_data->median_timeslice_duration_ms;
+
+              timeslice = min(next_timeslice_index_estimate,
+                                    FLAGS_tracked_usage_fixed_timeslices);
+            }
+
+            ResourceVector usage_estimate;
+            bool usage_estimated = EstimateTaskResourceUsageFromSimilarTasks(
+                td_ptr, timeslice, task_scheduled_res_id, &usage_estimate);
+
+            if (usage_estimated) {
+              // TODO(Josh): Set accuracy rating by comparing previous estimate
+              // with current usage, if a flag is set (an extension). Probably want
+              // to use the proper measured_usage
+              // TODO(Josh): Could calculate rating in each resource type dimension
+              // alternatively, can just use the min accuracy rating of all of them
+              double accuracy_rating = 0.5;
+
+              DetermineWeightedAverage({decay_data->last_usage_calculated,
+                                        usage_estimate},
+                                       {accuracy_rating, 1 - accuracy_rating},
+                                       &next_timeslice_usage);
+
+            }
+          }
+
+          double reservation_increment = FLAGS_reservation_increment;
+
+          ResourceVector old_reservations(td_ptr->resource_reservations());
+          CalculateReservationsFromUsage(next_timeslice_usage,
+                                         measured_usage,
+                                         limit,
+                                         reservation_increment,
+                                         reservations);
+
+
+          UpdateMachineReservations(task_scheduled_res_id,
+                                    &old_reservations,
+                                    reservations);
         }
+
       }
     }
   }
+}
+
+void EventDrivenScheduler::DetermineCurrentTaskUsage(
+    const ResourceVector& measured_usage,
+    const ResourceVector& prev_usage,
+    ResourceVector* current_usage) {
+  current_usage->CopyFrom(measured_usage);
 }
 
 void EventDrivenScheduler::ClearTaskResourceReservations(TaskID_t task_id) {
@@ -858,6 +1220,38 @@ void EventDrivenScheduler::UpdateMachineReservations(
   new_machine_reservations.set_ram_cap(new_machine_ram_reservation);
   knowledge_base()->UpdateMachineReservations(machine_res_id,
                                               new_machine_reservations);
+}
+
+void EventDrivenScheduler::GetPercentileTaskUsageRecord(
+    const vector<TaskUsageRecord>& usage_records,
+    uint32_t min_index, uint32_t max_index, uint64_t percentile,
+    TaskUsageRecord* percentile_record) {
+  auto ram_cap_comp = [](const TaskUsageRecord& first,
+                         const TaskUsageRecord& second) {
+    return first.ram_cap() < second.ram_cap();
+  };
+  TaskUsageRecord percentile_ram_cap_record =
+      GetPercentile(usage_records, percentile, ram_cap_comp,
+                    min_index, max_index);
+  percentile_record->set_ram_cap(percentile_ram_cap_record.ram_cap());
+
+  auto disk_bw_comp = [](const TaskUsageRecord& first,
+                         const TaskUsageRecord& second) {
+    return first.disk_bw() < second.disk_bw();
+  };
+  TaskUsageRecord percentile_disk_bw_record =
+      GetPercentile(usage_records, percentile, disk_bw_comp,
+                    min_index, max_index);
+  percentile_record->set_disk_bw(percentile_disk_bw_record.disk_bw());
+
+  auto disk_cap_comp = [](const TaskUsageRecord& first,
+                         const TaskUsageRecord& second) {
+    return first.disk_cap() < second.disk_cap();
+  };
+  TaskUsageRecord percentile_disk_cap_record =
+      GetPercentile(usage_records, percentile, disk_cap_comp,
+                    min_index, max_index);
+  percentile_record->set_disk_cap(percentile_disk_cap_record.disk_cap());
 }
 
 ResourceID_t EventDrivenScheduler::MachineResIDForResource(

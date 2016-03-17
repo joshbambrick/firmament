@@ -17,10 +17,12 @@
 #include "base/task_desc.pb.h"
 #include "base/task_final_report.pb.h"
 #include "engine/executors/executor_interface.h"
+#include "engine/request_usages/request_usages.h"
 #include "misc/messaging_interface.h"
 #include "scheduling/knowledge_base.h"
 #include "scheduling/scheduler_interface.h"
 #include "scheduling/scheduling_event_notifier_interface.h"
+#include "scheduling/task_reservation_decay_data.h"
 #include "storage/reference_interface.h"
 
 namespace firmament {
@@ -107,10 +109,31 @@ class EventDrivenScheduler : public SchedulerInterface {
   void RegisterSimulatedResource(ResourceID_t res_id);
   const set<TaskID_t>& RunnableTasksForJob(JobDescriptor* job_desc);
   bool UnbindTaskFromResource(TaskDescriptor* td_ptr, ResourceID_t res_id);
+  void DetermineCurrentTaskUsage(const ResourceVector& measured_usage,
+                                 const ResourceVector& prev_usage,
+                                 ResourceVector* current_usage);
   void ClearTaskResourceReservations(TaskID_t task_id);
+  bool EstimateTaskResourceUsageFromSimilarTasks(
+      TaskDescriptor* td_ptr,
+      uint32_t timeslice_index,
+      ResourceID_t scheduled_resource,
+      ResourceVector* usage_estimate);
+  double ScaleToLogistic(double dropoff, double value);
+  void DetermineWeightedAverage(const vector<ResourceVector>& resource_vectors,
+                                const vector<double>& weights,
+                                ResourceVector* weighted_average);
+  void CalculateReservationsFromUsage(const ResourceVector& usage,
+                                      const ResourceVector& safe_usage,
+                                      const ResourceVector& limit,
+                                      double reservation_increment,
+                                      ResourceVector* reservations);
   void UpdateMachineReservations(ResourceID_t res_id,
                                  const ResourceVector* old_reservations,
                                  const ResourceVector* new_reservations);
+  void GetPercentileTaskUsageRecord(
+      const vector<TaskUsageRecord>& usage_records,
+      uint32_t min_index, uint32_t max_index, uint64_t percentile,
+      TaskUsageRecord* median_record);
 
   // Cached sets of runnable and blocked tasks; these are updated on each
   // execution of LazyGraphReduction. Note that this set includes tasks from all
@@ -144,8 +167,13 @@ class EventDrivenScheduler : public SchedulerInterface {
   multimap<ResourceID_t, TaskID_t> resource_bindings_;
   // The current task bindings managed by this scheduler.
   unordered_map<TaskID_t, ResourceID_t> task_bindings_;
+  // Reservation decay data for each task managed by this scheduler.
+  unordered_map<TaskID_t, TaskReservationDecayData>
+      task_reservation_decay_data_;
   // Pointer to the coordinator's topology manager
   shared_ptr<TopologyManager> topology_manager_;
+  // A tool to record the resource usages of tasks with similar requests
+  RequestUsages similar_resource_request_usages_;
 };
 
 }  // namespace scheduler

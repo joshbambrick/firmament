@@ -51,8 +51,7 @@ DEFINE_bool(http_ui, true, "Enable HTTP interface");
 DEFINE_int32(http_ui_port, 8080,
         "The port that the HTTP UI will be served on; -1 to disable.");
 #endif
-DEFINE_uint64(heartbeat_interval, 1000000,
-              "Heartbeat interval in microseconds.");
+DECLARE_uint64(heartbeat_interval);
 DEFINE_uint64(monitor_resource_usage_interval, 1000000,
               "Monitor resources interval in microseconds.");
 DEFINE_bool(populate_knowledge_base_from_file, false,
