@@ -98,8 +98,11 @@ template<class Type, class Comp> Type GetPercentile(const vector<Type>& items,
                                                     Comp comp,
                                                     uint32_t start_index,
                                                     uint32_t end_index) {
-  vector<Type> copied_items(items.begin() + start_index,
-                            items.begin() + end_index);
+  vector<Type> copied_items;
+  for (uint32_t i = start_index; i <= end_index; ++i) {
+    copied_items.push_back(items[i]);
+  }
+
   uint32_t n_to_get = (percentile * copied_items.size()) / 100.0L;
   nth_element(copied_items.begin(),
               copied_items.begin() + n_to_get,
