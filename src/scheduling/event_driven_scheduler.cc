@@ -380,7 +380,6 @@ void EventDrivenScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
               FLAGS_heartbeat_interval / MILLISECONDS_TO_MICROSECONDS);
         } else {
           CHECK_GT(FLAGS_tracked_usage_fixed_timeslices, 0);
-          // TODO(Josh): Check that this calculation is correct
           usage_list->set_timeslice_duration_ms(
               (FLAGS_heartbeat_interval / MILLISECONDS_TO_MICROSECONDS)
               * task_stats->size()
@@ -437,9 +436,11 @@ void EventDrivenScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
           for (uint32_t i = 0; i < FLAGS_tracked_usage_fixed_timeslices; ++i) {
             // The min and max indices corresponding to this timeslice
             min_usage_indices.push_back(
-                min(round(i * record_timeslice_ratio), absolute_max_index));
+                min(round(i * record_timeslice_ratio),
+                    absolute_max_index));
             max_usage_indices.push_back(
-                min(round((i + 1) * record_timeslice_ratio), absolute_max_index));
+                min(round((i + 1) * record_timeslice_ratio),
+                    absolute_max_index));
           }
         }
       } else {
@@ -454,8 +455,10 @@ void EventDrivenScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
         CHECK(valid_usage_records.size() > max_usage_indices[i]);
         TaskUsageRecord median_record;
         GetPercentileTaskUsageRecord(valid_usage_records,
-                                     min_usage_indices[i], max_usage_indices[i],
-                                     FLAGS_resource_usage_percentile, &median_record);
+                                     min_usage_indices[i],
+                                     max_usage_indices[i],
+                                     FLAGS_resource_usage_percentile,
+                                     &median_record);
         median_record.set_is_valid(true);
         usage_list->add_usage_records()->CopyFrom(median_record);
       }
@@ -1142,17 +1145,18 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
               timeslice = number_of_stats;
             } else {
               CHECK_GT(FLAGS_tracked_usage_fixed_timeslices, 0);
-              // TODO(Josh): Check that this calculation is correct
-              // should perhaps actually add on health monitor check frequency
 
-              // TODO(Josh): consider if decay_data->median_timeslice_duration_ms is 0
-              int64_t next_timeslice_index_estimate =
-                  number_of_stats
-                  * (FLAGS_heartbeat_interval / MILLISECONDS_TO_MICROSECONDS)
-                  / decay_data->median_timeslice_duration_ms;
+              // TODO(Josh): should perhaps add health monitor check frequency
+              timeslice = FLAGS_tracked_usage_fixed_timeslices;
 
-              timeslice = min(next_timeslice_index_estimate,
-                                    FLAGS_tracked_usage_fixed_timeslices);
+              if (decay_data->median_timeslice_duration_ms != 0) {
+                int64_t next_timeslice_index_estimate =
+                    number_of_stats
+                    * (FLAGS_heartbeat_interval / MILLISECONDS_TO_MICROSECONDS)
+                    / decay_data->median_timeslice_duration_ms;
+                timeslice = min(next_timeslice_index_estimate,
+                                      FLAGS_tracked_usage_fixed_timeslices);
+              }
             }
 
             ResourceVector usage_estimate;
@@ -1171,7 +1175,6 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                                         usage_estimate},
                                        {accuracy_rating, 1 - accuracy_rating},
                                        &next_timeslice_usage);
-
             }
           }
 
@@ -1189,7 +1192,6 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                                          limit,
                                          reservation_increment,
                                          reservations);
-
 
           UpdateMachineReservations(task_scheduled_res_id,
                                     &old_reservations,
