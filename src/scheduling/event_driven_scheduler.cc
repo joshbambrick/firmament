@@ -63,6 +63,12 @@ DEFINE_bool(track_similar_task_usage_timeslices, true, "Should use similar "
 DEFINE_int64(tracked_usage_fixed_timeslices, -1, "How many timeslices to "
              "assign each task, if you want this to be fixed.");
 
+DEFINE_int64(burstiness_estimation_window_size, -1, "Coeff for exponential "
+              "averaging new usage measurements, applied to new measurement");
+
+DEFINE_double(burstiness_estimation_dropoff, 0.5, "Dropoff affecting how much "
+              "additional burstiness decreases reliability of measurement");
+
 DEFINE_double(task_similarity_request_distance_weight_dropoff, 0.05, "Dropoff "
               "affecting how much additional resource request distance "
               "decreases the similarity of tasks");
@@ -1170,6 +1176,12 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
           }
 
           double reservation_increment = FLAGS_reservation_increment;
+          if (FLAGS_burstiness_estimation_window_size > 0) {
+            // TODO(Josh): consider just multiplying by the coeff
+            reservation_increment = 
+                (reservation_increment
+                 + DetermineTaskBurstinessCoeff(full_stats)) / 2;
+          }
 
           ResourceVector old_reservations(td_ptr->resource_reservations());
           CalculateReservationsFromUsage(next_timeslice_usage,
@@ -1187,6 +1199,69 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
       }
     }
   }
+}
+
+double EventDrivenScheduler::DetermineTaskBurstinessCoeff(
+    const deque<TaskPerfStatisticsSample>* stats) {
+  CHECK_GT(FLAGS_burstiness_estimation_window_size, 0);
+  uint64_t window_size = FLAGS_burstiness_estimation_window_size;
+
+  vector<ResourceVector> usages;
+  for (deque<TaskPerfStatisticsSample>::const_reverse_iterator it =
+           stats->crbegin();
+       it != stats->crend()
+       && usages.size() < window_size;
+       ++it) {
+    if (it->has_resources()) {
+      usages.push_back(it->resources());
+    }
+  }
+
+  if (usages.size() != window_size) return 1;
+
+  // Calculate sums of usages
+  uint64_t sum_ram_cap = 0;
+  uint64_t sum_disk_bw = 0;
+  uint64_t sum_disk_cap = 0;
+  for (auto& usage : usages) {
+    sum_ram_cap += usage.ram_cap();
+    sum_disk_bw += usage.disk_bw();
+    sum_disk_cap += usage.disk_cap();
+  }
+
+  // Calculate mean usages
+  double mean_ram_cap = sum_ram_cap / usages.size();
+  double mean_disk_bw = sum_disk_bw / usages.size();
+  double mean_disk_cap = sum_disk_cap / usages.size();
+
+  // Calculate variances of usages
+  double var_ram_cap = 0;
+  double var_disk_bw = 0;
+  double var_disk_cap = 0;
+  for (auto& usage : usages) {
+      var_ram_cap += pow((usage.ram_cap() - mean_ram_cap), 2);
+      var_disk_bw += pow((usage.disk_bw() - mean_disk_bw), 2);
+      var_disk_cap += pow((usage.disk_cap() - mean_disk_cap), 2);
+  }
+  var_ram_cap /= window_size;
+  var_disk_bw /= window_size;
+  var_disk_cap /= window_size;
+
+  // Calculate Fano factor of usages
+  double fano_ram_cap = var_ram_cap / mean_ram_cap;
+  double fano_disk_bw = var_disk_bw / mean_disk_bw;
+  double fano_disk_cap = var_disk_cap / mean_disk_cap;
+
+  // Estimate burtiness coefficient for each resource
+  double burst_ram_cap =
+      ScaleToLogistic(FLAGS_burstiness_estimation_dropoff, fano_ram_cap);
+  double burst_disk_bw =
+      ScaleToLogistic(FLAGS_burstiness_estimation_dropoff, fano_disk_bw);
+  double burst_disk_cap =
+      ScaleToLogistic(FLAGS_burstiness_estimation_dropoff, fano_disk_cap);
+
+  // Return the max burstiness coefficient
+  return max(burst_ram_cap, max(burst_disk_bw, burst_disk_cap));
 }
 
 void EventDrivenScheduler::DetermineCurrentTaskUsage(
