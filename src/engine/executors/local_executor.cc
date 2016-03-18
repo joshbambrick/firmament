@@ -44,6 +44,8 @@ DEFINE_string(container_monitor_host, "",
             "The host of the container monitor.");
 DEFINE_bool(use_storage_resource_monitoring, true,
             "Whether to support monitoring of container storage use.");
+DEFINE_bool(enforce_cgroup_limits, true,
+            "Whether to enforce limits on resources using cgroups.");
 DEFINE_string(rootfs_base_dir, "/var/lib/lxc/",
             "Directory where container rootfs directories will be.");
 DEFINE_bool(pin_tasks_to_cores, true,
@@ -62,6 +64,8 @@ DEFINE_string(task_perf_dir, "/tmp/firmament-perf",
               "Path where tasks' perf logs should be written.");
 DEFINE_string(task_data_dir, "/tmp/firmament-data",
               "Path where tasks' perf logs should be written.");
+DEFINE_string(task_extra_dir, "",
+              "Any additional director that you would like to mount.");
 DEFINE_string(perf_event_list,
               "cpu-clock,task-clock,context-switches,cpu-migrations,"
               "page-faults,cycles,instructions,branches,branch-misses,"
@@ -98,6 +102,12 @@ LocalExecutor::LocalExecutor(ResourceID_t resource_id,
   VLOG(1) << "Tasks will be bound to the resource by the topology manager"
           << "at " << topology_manager_;
   CreateDirectories();
+}
+
+LocalExecutor::~LocalExecutor() {
+  for (auto& it : task_running_) {
+    ShutdownContainerIfRunning(it.first);
+  }
 }
 
 char* LocalExecutor::AddPerfMonitoringToCommandLine(
@@ -530,35 +540,41 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
     LOG(INFO) << "Successfully created container for task " << task_id;
   }
 
-  const char* ram_cap =
-      to_string(resource_reservations.ram_cap() * BYTES_TO_MB).c_str();
-  if (strcmp(ram_cap, "0") != 0) {
-    c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes", ram_cap);
+  if (FLAGS_enforce_cgroup_limits) {
+    const char* ram_cap =
+        to_string(resource_reservations.ram_cap() * BYTES_TO_MB).c_str();
+    if (strcmp(ram_cap, "0") != 0) {
+      c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes", ram_cap);
+    }
+
+
+    string disk_bw = to_string(resource_reservations.disk_bw() * BYTES_TO_MB);
+    if (disk_bw != "0" && FLAGS_blockdev_major_number != -1
+        && FLAGS_blockdev_minor_number != -1
+        && false) {
+      disk_bw = to_string(FLAGS_blockdev_major_number) + ":"
+          + to_string(FLAGS_blockdev_minor_number) + " " + disk_bw;
+      c->set_config_item(c, "lxc.cgroup.blkio.throttle.write_bps_device",
+                         disk_bw.c_str());
+      c->set_config_item(c, "lxc.cgroup.blkio.throttle.read_bps_device",
+                         disk_bw.c_str());
+    }
   }
 
-  string disk_bw = to_string(resource_reservations.disk_bw());
-  if (disk_bw != "0" && FLAGS_blockdev_major_number != -1
-      && FLAGS_blockdev_minor_number != -1) {
-    disk_bw = to_string(FLAGS_blockdev_major_number) + ":"
-        + to_string(FLAGS_blockdev_minor_number) + " " + disk_bw;
-    c->set_config_item(c, "lxc.cgroup.blkio.throttle.write_bps_device",
-                       disk_bw.c_str());
-    c->set_config_item(c, "lxc.cgroup.blkio.throttle.read_bps_device",
-                       disk_bw.c_str());
-  }
-
+  ;
   string full_task_log_dir =
       boost::filesystem::canonical(FLAGS_task_log_dir).string();
   string full_data_dir =
       boost::filesystem::canonical(data_dir).string();
+  string full_extra_dir =
+      boost::filesystem::canonical(FLAGS_task_extra_dir).string();
 
   c->set_config_item(c, "lxc.mount.entry",
                      CreateMountConfigEntry(full_task_log_dir).c_str());
   c->set_config_item(c, "lxc.mount.entry",
                      CreateMountConfigEntry(full_data_dir).c_str());
-  c->set_config_item(c, "lxc.logfile", "/home/josh/Repos/lxc-log0.log");
-  c->set_config_item(c, "lxc.logpriority", "TRACE");
-  c->set_config_item(c, "lxc.console.logfile", "/home/josh/Repos/lxc-log1.log");
+  c->set_config_item(c, "lxc.mount.entry",
+                     CreateMountConfigEntry(full_extra_dir).c_str());
 
   c->start(c, 0, NULL);
 
