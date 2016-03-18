@@ -252,10 +252,10 @@ void ProcFSMachine::GetMachineCapacity(ResourceVector* cap) {
     }
     if (disk_is_rotational) {
       // Legacy HDD, so return low bandwidth
-      cap->set_disk_bw(50 * MB_TO_BYTES * 8);  // 50 MB/s, a medium estimate
+      cap->set_disk_bw(50);  // 50 MB/s, a medium estimate
     } else {
       // SSD, so go faster
-      cap->set_disk_bw(300 * MB_TO_BYTES * 8); // 300 MB/s, a medium estimate
+      cap->set_disk_bw(300); // 300 MB/s, a medium estimate
     }
   } else {
     cap->set_disk_bw(FLAGS_monitor_blockdev_maxbw);

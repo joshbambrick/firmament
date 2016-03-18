@@ -116,6 +116,7 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(
   // alternatively, could sample over the last n readings, or the last t time
   uint64_t total_disk_usage_bytes = 0;
   uint64_t total_disk_time_ns = 0;
+  bool sevice_time_read = false;
   if (json_is_true(has_diskio)) {
     json_t* diskio = json_object_get(latest_event, "diskio");
 
@@ -132,6 +133,7 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(
 
     json_t* io_service_time = json_object_get(diskio, "io_service_time");
     if (io_service_time) {
+      sevice_time_read = true;
       uint64_t groups = json_array_size(io_service_time);
       for (uint32_t i = 0; i < groups; ++i) {
         json_t* cur_group = json_array_get(io_service_time, i);
@@ -148,20 +150,18 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(
         disk_tracker->UpdateDiskIOUsage(total_disk_usage_bytes);
     uint64_t time_since_last_check = disk_tracker->UpdateDiskIOCheckTime(
         GetCurrentTimestamp());
-    if (total_disk_time_ns != 0) {
+    if (sevice_time_read) {
       total_disk_time_ns = disk_tracker->UpdateDiskIOTime(total_disk_time_ns);
-      total_disk_time_us = total_disk_time_ns / SECONDS_TO_MICROSECONDS;
+      total_disk_time_us = total_disk_time_ns / NANOSECONDS_IN_MICROSECOND;
     } else {
       total_disk_time_us = time_since_last_check;
     }
   } else {
-    total_disk_time_us = total_disk_time_ns / SECONDS_TO_MICROSECONDS;
+    total_disk_time_us = total_disk_time_ns / NANOSECONDS_IN_MICROSECOND;
   }
 
-  uint64_t total_disk_usage_bits = total_disk_usage_bytes * 8;
-
   uint64_t disk_bw_value = (total_disk_time_us > 0)
-      ? ((total_disk_usage_bits * SECONDS_TO_MICROSECONDS) / total_disk_time_us)
+      ? ((total_disk_usage_bytes * SECONDS_TO_MICROSECONDS) / (total_disk_time_us * BYTES_TO_MB))
       : 0;
 
   resource_vector.set_disk_bw(disk_bw_value);
