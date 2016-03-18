@@ -48,6 +48,7 @@ class LocalExecutor : public ExecutorInterface {
   LocalExecutor(ResourceID_t resource_id,
                 const string& coordinator_uri,
                 shared_ptr<TopologyManager> topology_mgr);
+  ~LocalExecutor();
   bool CheckRunningTasksHealth(vector<TaskID_t>* failed_tasks);
   void HandleTaskCompletion(TaskDescriptor* td,
                             TaskFinalReport* report);
