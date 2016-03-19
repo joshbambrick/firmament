@@ -206,7 +206,6 @@ void Coordinator::AddResource(ResourceTopologyNodeDescriptor* rtnd,
       scheduler_->knowledge_base()->UpdateMachineReservations(
           machine_uuid_, machine_reservations);
     }
-    scheduler_->SetMachineUuid(machine_uuid_);
   }
   // Register with scheduler if this resource is schedulable
   if (resource_desc->type() == ResourceDescriptor::RESOURCE_PU) {

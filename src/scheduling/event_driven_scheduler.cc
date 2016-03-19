@@ -1392,8 +1392,5 @@ vector<TaskStateMessage> EventDrivenScheduler::CreateTaskStateChanges() {
   return task_state_changes;
 }
 
-void EventDrivenScheduler::SetMachineUuid(ResourceID_t machine_uuid) {
-  machine_uuid_ = machine_uuid;
-}
 }  // namespace scheduler
 }  // namespace firmament

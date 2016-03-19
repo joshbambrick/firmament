@@ -251,12 +251,6 @@ class SchedulerInterface : public PrintableInterface {
   virtual uint64_t ScheduleJobs(const vector<JobDescriptor*>& jds_ptr,
                                 SchedulerStats* scheduler_stats) = 0;
 
-  /**
-   * Updates the value of the resource ID for the local machine.
-   * @param machine_uuid the new uuid for the machine
-   */
-  virtual void SetMachineUuid(ResourceID_t machine_uuid) = 0;
-
  protected:
   /**
    * Handles the migration of a task.
