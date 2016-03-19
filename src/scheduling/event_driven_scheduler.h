@@ -134,6 +134,7 @@ class EventDrivenScheduler : public SchedulerInterface {
       const vector<TaskUsageRecord>& usage_records,
       uint32_t min_index, uint32_t max_index, uint64_t percentile,
       TaskUsageRecord* median_record);
+  string ReservationResourceVectorToString(const ResourceVector& rv);
 
   // Cached sets of runnable and blocked tasks; these are updated on each
   // execution of LazyGraphReduction. Note that this set includes tasks from all

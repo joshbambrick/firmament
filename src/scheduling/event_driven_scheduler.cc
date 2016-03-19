@@ -279,6 +279,9 @@ void EventDrivenScheduler::ExecuteTask(TaskDescriptor* td_ptr,
       }
     }
 
+    VLOG(1) << "Initialized resource reservations for task " << task_id
+            << " to " << ReservationResourceVectorToString(*task_reservations);
+
     ResourceVector empty_resource_reservations;
     UpdateMachineReservations(res_id, &empty_resource_reservations,
                               task_reservations);
@@ -1126,6 +1129,9 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
       if (reservations && latest_stats && latest_stats->has_resources()) {
         const ResourceVector limit = td_ptr->resource_request();
         const ResourceVector measured_usage = latest_stats->resources();
+        VLOG(1) << "Task " << task_id << " resource usage measured "
+                << ReservationResourceVectorToString(measured_usage)
+                << " vs limit " << ReservationResourceVectorToString(limit);
         if (measured_usage.ram_cap() > limit.ram_cap()
             || measured_usage.disk_bw() > limit.disk_bw()
             || measured_usage.disk_cap() > limit.disk_cap()) {
@@ -1202,6 +1208,10 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                                          limit,
                                          reservation_increment,
                                          reservations);
+
+          VLOG(1) << "Updated resource reservations for task " << task_id
+                  << " to "
+                  << ReservationResourceVectorToString(*reservations);
 
           UpdateMachineReservations(task_scheduled_res_id,
                                     &old_reservations,
@@ -1390,6 +1400,15 @@ vector<TaskStateMessage> EventDrivenScheduler::CreateTaskStateChanges() {
   }
 
   return task_state_changes;
+}
+
+string EventDrivenScheduler::ReservationResourceVectorToString(
+    const ResourceVector& rv) {
+  stringstream out;
+  out << rv.ram_cap() << "/";
+  out << rv.disk_bw() << "/";
+  out << rv.disk_cap() << "/";
+  return out.str();
 }
 
 }  // namespace scheduler
