@@ -36,6 +36,9 @@
 DEFINE_uint64(heartbeat_interval, 1000000,
               "Heartbeat interval in microseconds.");
 
+DEFINE_bool(enable_resource_reservation_decay, true, "Should decay task "
+            "resource reservations during execution.");
+
 DEFINE_bool(track_same_ec_task_resource_usage, false, "Should track resource "
             "usage of tasks, for searches by equivalence class");
 
@@ -232,49 +235,54 @@ void EventDrivenScheduler::DeregisterResource(ResourceID_t res_id) {
 void EventDrivenScheduler::ExecuteTask(TaskDescriptor* td_ptr,
                                        ResourceDescriptor* rd_ptr) {
   TaskID_t task_id = td_ptr->uid();
-
-  TaskReservationDecayData base_decay_data;
-  CHECK(InsertIfNotPresent(&task_reservation_decay_data_, td_ptr->uid(),
-                           base_decay_data));
-  TaskReservationDecayData* decay_data = FindOrNull(
-      task_reservation_decay_data_,
-      td_ptr->uid());
-  CHECK_NOTNULL(decay_data);
-
-  // Initialize resource reservations
-  td_ptr->mutable_resource_reservations()->CopyFrom(td_ptr->resource_request());
-  if (td_ptr->similar_resource_request_usage_lists_size()
-      && (FLAGS_track_same_ec_task_resource_usage
-          || FLAGS_track_similar_resource_request_usage)) {
-    vector<uint64_t> timeslice_durations_ms;
-    for (uint32_t i = 0;
-         i < static_cast<uint32_t>(
-             td_ptr->similar_resource_request_usage_lists_size());
-         ++i) {
-      UsageList usage_list = td_ptr->similar_resource_request_usage_lists(i);
-      timeslice_durations_ms.push_back(usage_list.timeslice_duration_ms());
-    }
-    CHECK_NOTNULL(decay_data);
-    decay_data->median_timeslice_duration_ms =
-        GetPercentile(timeslice_durations_ms, 50);
-
-    ResourceVector usage_estimate;
-    bool usage_estimated = EstimateTaskResourceUsageFromSimilarTasks(
-        td_ptr, 0, ResourceIDFromString(rd_ptr->uuid()),
-        &usage_estimate);
-    if (usage_estimated) {
-      CalculateReservationsFromUsage(usage_estimate,
-                                     usage_estimate,
-                                     td_ptr->resource_request(),
-                                     FLAGS_reservation_increment,
-                                     td_ptr->mutable_resource_reservations());
-    }
-  }
-
   ResourceID_t res_id = ResourceIDFromString(rd_ptr->uuid());
-  ResourceVector empty_resource_reservations;
-  UpdateMachineReservations(res_id, &empty_resource_reservations,
-                                          &(td_ptr->resource_reservations()));
+
+  if (FLAGS_enable_resource_reservation_decay) {
+    TaskReservationDecayData base_decay_data;
+    CHECK(InsertIfNotPresent(&task_reservation_decay_data_, td_ptr->uid(),
+                             base_decay_data));
+    TaskReservationDecayData* decay_data = FindOrNull(
+        task_reservation_decay_data_,
+        td_ptr->uid());
+    CHECK_NOTNULL(decay_data);
+
+    // Initialize resource reservations
+    ResourceVector* task_reservations =
+        td_ptr->mutable_resource_reservations();
+    task_reservations->CopyFrom(
+        td_ptr->resource_request());
+    if (td_ptr->similar_resource_request_usage_lists_size()
+        && (FLAGS_track_same_ec_task_resource_usage
+            || FLAGS_track_similar_resource_request_usage)) {
+      vector<uint64_t> timeslice_durations_ms;
+      for (uint32_t i = 0;
+           i < static_cast<uint32_t>(
+               td_ptr->similar_resource_request_usage_lists_size());
+           ++i) {
+        UsageList usage_list = td_ptr->similar_resource_request_usage_lists(i);
+        timeslice_durations_ms.push_back(usage_list.timeslice_duration_ms());
+      }
+      CHECK_NOTNULL(decay_data);
+      decay_data->median_timeslice_duration_ms =
+          GetPercentile(timeslice_durations_ms, 50);
+
+      ResourceVector usage_estimate;
+      bool usage_estimated = EstimateTaskResourceUsageFromSimilarTasks(
+          td_ptr, 0, ResourceIDFromString(rd_ptr->uuid()),
+          &usage_estimate);
+      if (usage_estimated) {
+        CalculateReservationsFromUsage(usage_estimate,
+                                       usage_estimate,
+                                       td_ptr->resource_request(),
+                                       FLAGS_reservation_increment,
+                                       task_reservations);
+      }
+    }
+
+    ResourceVector empty_resource_reservations;
+    UpdateMachineReservations(res_id, &empty_resource_reservations,
+                              task_reservations);
+  }
   // Remove the task from the runnable set
   CHECK_EQ(runnable_tasks_.erase(task_id), 1)
     << "Failed to remove task " << task_id << " from runnable set!";
@@ -1091,6 +1099,8 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
 }
 
 void EventDrivenScheduler::UpdateTaskResourceReservations() {
+  if (!FLAGS_enable_resource_reservation_decay) return;
+
   for (thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
            = task_map_->begin();
        it != task_map_->end(); it++) {
@@ -1283,14 +1293,16 @@ void EventDrivenScheduler::DetermineCurrentTaskUsage(
 }
 
 void EventDrivenScheduler::ClearTaskResourceReservations(TaskID_t task_id) {
-  TaskDescriptor* td = FindPtrOrNull(*task_map_, task_id);
-  CHECK_NOTNULL(td);
-  ResourceID_t* res_id_ptr = BoundResourceForTask(task_id);
-  CHECK_NOTNULL(res_id_ptr);
-  ResourceVector empty_resource_reservations;
-  UpdateMachineReservations(*res_id_ptr, &(td->resource_reservations()),
-                            &empty_resource_reservations);
-  td->clear_resource_reservations();
+  if (!FLAGS_enable_resource_reservation_decay) {
+    TaskDescriptor* td = FindPtrOrNull(*task_map_, task_id);
+    CHECK_NOTNULL(td);
+    ResourceID_t* res_id_ptr = BoundResourceForTask(task_id);
+    CHECK_NOTNULL(res_id_ptr);
+    ResourceVector empty_resource_reservations;
+    UpdateMachineReservations(*res_id_ptr, &(td->resource_reservations()),
+                              &empty_resource_reservations);
+    td->clear_resource_reservations();
+  }
 }
 
 void EventDrivenScheduler::UpdateMachineReservations(

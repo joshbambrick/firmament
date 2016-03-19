@@ -39,6 +39,7 @@
 // It is necessary to declare listen_uri here, since "node.o" comes after
 // "coordinator.o" in linking order (I *think*).
 DECLARE_string(listen_uri);
+DECLARE_bool(enable_resource_reservation_decay);
 DEFINE_string(parent_uri, "", "The URI of the parent coordinator to register "
         "with.");
 DEFINE_bool(include_local_resources, true, "Add local machine's resources; "
@@ -200,9 +201,11 @@ void Coordinator::AddResource(ResourceTopologyNodeDescriptor* rtnd,
     ResourceVector* cap = resource_desc->mutable_resource_capacity();
     machine_monitor_.GetMachineCapacity(cap);
     machine_capacity_ = *cap;
-    ResourceVector machine_reservations;
-    scheduler_->knowledge_base()->UpdateMachineReservations(machine_uuid_,
-                                                        machine_reservations);
+    if (FLAGS_enable_resource_reservation_decay) {
+      ResourceVector machine_reservations;
+      scheduler_->knowledge_base()->UpdateMachineReservations(
+          machine_uuid_, machine_reservations);
+    }
     scheduler_->SetMachineUuid(machine_uuid_);
   }
   // Register with scheduler if this resource is schedulable
@@ -613,7 +616,8 @@ void Coordinator::HandleHeartbeat(const HeartbeatMessage& msg) {
       rsp->set_last_heartbeat(GetCurrentTimestamp());
       // Record resource statistics sample
       scheduler_->knowledge_base()->AddMachineSample(msg.load());
-      if (msg.has_load() && msg.load().has_resource_reservations()) {
+      if (msg.has_load() && msg.load().has_resource_reservations()
+          && FLAGS_enable_resource_reservation_decay) {
         scheduler_->knowledge_base()->UpdateMachineReservations(
             ResourceIDFromString(msg.load().resource_id()),
             msg.load().resource_reservations());
