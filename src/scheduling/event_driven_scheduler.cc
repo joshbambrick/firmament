@@ -279,6 +279,9 @@ void EventDrivenScheduler::ExecuteTask(TaskDescriptor* td_ptr,
       }
     }
 
+    VLOG(1) << "Initialized resource reservations for task " << task_id
+            << " to " << ReservationResourceVectorToString(*task_reservations);
+
     ResourceVector empty_resource_reservations;
     UpdateMachineReservations(res_id, &empty_resource_reservations,
                               task_reservations);
@@ -1203,6 +1206,10 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                                          reservation_increment,
                                          reservations);
 
+          VLOG(1) << "Updated resource reservations for task " << task_id
+                  << " to "
+                  << ReservationResourceVectorToString(*reservations);
+
           UpdateMachineReservations(task_scheduled_res_id,
                                     &old_reservations,
                                     reservations);
@@ -1390,6 +1397,15 @@ vector<TaskStateMessage> EventDrivenScheduler::CreateTaskStateChanges() {
   }
 
   return task_state_changes;
+}
+
+string EventDrivenScheduler::ReservationResourceVectorToString(
+    const ResourceVector& rv) {
+  stringstream out;
+  out << rv.ram_cap() << "/";
+  out << rv.disk_bw() << "/";
+  out << rv.disk_cap() << "/";
+  return out.str();
 }
 
 }  // namespace scheduler
