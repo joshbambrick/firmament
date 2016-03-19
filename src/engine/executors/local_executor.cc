@@ -550,8 +550,7 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
 
     string disk_bw = to_string(resource_reservations.disk_bw() * BYTES_TO_MB);
     if (disk_bw != "0" && FLAGS_blockdev_major_number != -1
-        && FLAGS_blockdev_minor_number != -1
-        && false) {
+        && FLAGS_blockdev_minor_number != -1) {
       disk_bw = to_string(FLAGS_blockdev_major_number) + ":"
           + to_string(FLAGS_blockdev_minor_number) + " " + disk_bw;
       c->set_config_item(c, "lxc.cgroup.blkio.throttle.write_bps_device",
@@ -561,7 +560,6 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
     }
   }
 
-  ;
   string full_task_log_dir =
       boost::filesystem::canonical(FLAGS_task_log_dir).string();
   string full_data_dir =
