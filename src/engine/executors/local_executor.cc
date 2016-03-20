@@ -44,6 +44,8 @@ DEFINE_string(container_monitor_host, "",
             "The host of the container monitor.");
 DEFINE_bool(use_storage_resource_monitoring, true,
             "Whether to support monitoring of container storage use.");
+DEFINE_bool(use_storage_resource_monitor_intialize_sync, true,
+            "Whether to synchronously initialize storage resource monitor.");
 DEFINE_bool(enforce_cgroup_limits, true,
             "Whether to enforce limits on resources using cgroups.");
 DEFINE_string(rootfs_base_dir, "/var/lib/lxc/",
@@ -662,6 +664,10 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
           CHECK_NOTNULL(task_disk_tracker);
 
           if (FLAGS_use_storage_resource_monitoring) {
+            if (!task_disk_tracker->IsInitialized()
+                && FLAGS_use_storage_resource_monitor_intialize_sync) {
+              UpdateTaskDiskTrackerSync(task_id);
+            }
             if (task_disk_tracker->IsInitialized()) {
               stats_usage->set_disk_cap(task_disk_tracker->GetFullDiskUsage() / BYTES_TO_MB);
             }
