@@ -14,16 +14,17 @@ namespace firmament {
 class ContainerMonitorUtils {
   public:
     static void StartContainerMonitor(int port);
-    static ResourceVector CreateResourceVector(
-        int port, string container_monitor_host, string task_container_name);
-    static ResourceVector CreateResourceVector(
+    static bool CreateResourceVector(
         int port, string container_monitor_host, string task_container_name,
-        ContainerDiskUsageTracker* disk_tracker);
+        ResourceVector* rv);
+    static bool CreateResourceVector(
+        int port, string container_monitor_host, string task_container_name,
+        ContainerDiskUsageTracker* disk_tracker, ResourceVector* rv);
 
   protected:
-    static ResourceVector CreateResourceVector(
+    static bool CreateResourceVector(
         string json_input, string task_container_name,
-        ContainerDiskUsageTracker* disk_tracker);
+        ContainerDiskUsageTracker* disk_tracker, ResourceVector* rv);
     static size_t WriteCallback(void *contents,
                                 size_t size,
                                 size_t nmemb,

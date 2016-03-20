@@ -54,60 +54,60 @@ string ContainerMonitorUtils::GetHttpResponse(string url) {
 }
 
 
-ResourceVector ContainerMonitorUtils::CreateResourceVector(
+bool ContainerMonitorUtils::CreateResourceVector(
     string json_input, string task_container_name,
-    ContainerDiskUsageTracker* disk_tracker) {
-  ResourceVector resource_vector;
+    ContainerDiskUsageTracker* disk_tracker, ResourceVector* rv) {
+  ResourceVector read_usage;
   string parse_fail_message = "Couldn't parse cAdvisor response";
 
   if (json_input == "") {
-    throw parse_fail_message;
+    return false;
   }
 
   json_error_t error;
   json_t *root = json_loads(json_input.c_str(), 0, &error);
 
   if (!root) {
-    throw parse_fail_message;
+    return false;
   }
 
   json_t* container_events = json_object_get(root, task_container_name.c_str());
   if (!json_is_array(container_events)) {
-    throw parse_fail_message;
+    return false;
   }
 
 
   uint64_t events = json_array_size(container_events);
   if (events == 0) {
-    throw parse_fail_message;
+    return false;
   }
 
   json_t* latest_event = json_array_get(container_events, events - 1);
   if (!json_is_object(latest_event)) {
-    throw parse_fail_message;
+    return false;
   }
 
   json_t* has_memory = json_object_get(latest_event, "has_memory");
   json_t* has_diskio = json_object_get(latest_event, "has_diskio");
 
   if (json_is_false(has_diskio) && json_is_false(has_memory)) {
-    throw parse_fail_message;
+    return false;
   }
 
   if (json_is_true(has_memory)) {
     json_t* memory = json_object_get(latest_event, "memory");
     if (!memory) {
-      throw parse_fail_message;
+      return false;
     }
     json_t* memory_usage = json_object_get(memory, "usage");
 
     if (!memory_usage) {
-      throw parse_fail_message;
+      return false;
     }
 
     int memory_usage_value = json_integer_value(memory_usage) / BYTES_TO_MB;
     if (memory_usage_value != 0) {
-      resource_vector.set_ram_cap(memory_usage_value);
+      read_usage.set_ram_cap(memory_usage_value);
     }
   }
 
@@ -164,37 +164,36 @@ ResourceVector ContainerMonitorUtils::CreateResourceVector(
       ? ((total_disk_usage_bytes * SECONDS_TO_MICROSECONDS) / (total_disk_time_us * BYTES_TO_MB))
       : 0;
 
-  resource_vector.set_disk_bw(disk_bw_value);
+  read_usage.set_disk_bw(disk_bw_value);
 
-  return resource_vector;
+  rv->CopyFrom(read_usage);
+
+  return true;
 }
 
-ResourceVector ContainerMonitorUtils::CreateResourceVector(
-    int port,
-    string container_monitor_host,
-    string task_container_name) {
-  return CreateResourceVector(port, container_monitor_host, task_container_name,
-                              NULL);
-}
-
-ResourceVector ContainerMonitorUtils::CreateResourceVector(
+bool ContainerMonitorUtils::CreateResourceVector(
     int port,
     string container_monitor_host,
     string task_container_name,
-    ContainerDiskUsageTracker* disk_tracker) {
+    ResourceVector* rv) {
+  return CreateResourceVector(port, container_monitor_host, task_container_name,
+                              NULL, rv);
+}
+
+bool ContainerMonitorUtils::CreateResourceVector(
+    int port,
+    string container_monitor_host,
+    string task_container_name,
+    ContainerDiskUsageTracker* disk_tracker,
+    ResourceVector* rv) {
   task_container_name = "/lxc/" + task_container_name;
   string url = container_monitor_host + ":" + to_string(port) +
       "/api/v2.0/stats" + task_container_name;
   ResourceVector resource_vector;
-  try {
-    resource_vector = CreateResourceVector(GetHttpResponse(url),
-                                           task_container_name,
-                                           disk_tracker);
-  } catch (string message) {
-    LOG(ERROR) << message;
-  }
-
-  return resource_vector;
+  return CreateResourceVector(GetHttpResponse(url),
+                              task_container_name,
+                              disk_tracker,
+                              rv);
 }
 
 }  // namespace firmament
