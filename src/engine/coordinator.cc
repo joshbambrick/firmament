@@ -53,7 +53,7 @@ DEFINE_int32(http_ui_port, 8080,
         "The port that the HTTP UI will be served on; -1 to disable.");
 #endif
 DECLARE_uint64(heartbeat_interval);
-DEFINE_uint64(monitor_resource_usage_interval, 1000000,
+DEFINE_uint64(monitor_resource_usage_interval, 10000000,
               "Monitor resources interval in microseconds.");
 DEFINE_bool(populate_knowledge_base_from_file, false,
             "True if we should load the knowledge base from file.");
@@ -416,11 +416,15 @@ void Coordinator::FreeResources(ResourceVector resources_to_free) {
           = task_table_->begin();
       it != task_table_->end(); it++) {
     TaskDescriptor* td_ptr = it->second;
-    ResourceID_t task_machine_res_id = scheduler_->MachineResIDForResource(
-                    ResourceIDFromString(td_ptr->scheduled_to_resource()));
-    if (td_ptr->state() == TaskDescriptor::RUNNING
-        && task_machine_res_id == machine_uuid_)
-      machine_running_task_descs.push(td_ptr);
+    if (td_ptr->has_scheduled_to_resource()) {
+      ResourceID_t task_machine_res_id = scheduler_->MachineResIDForResource(
+                      ResourceIDFromString(td_ptr->scheduled_to_resource()));
+      if (td_ptr->state() == TaskDescriptor::RUNNING
+          && task_machine_res_id == machine_uuid_) {
+        machine_running_task_descs.push(td_ptr);
+      }
+
+    }
   }
 
   ResourceVector resource_freed;
