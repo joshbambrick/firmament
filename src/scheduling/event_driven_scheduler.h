@@ -107,6 +107,8 @@ class EventDrivenScheduler : public SchedulerInterface {
   void RegisterSimulatedResource(ResourceID_t res_id);
   const set<TaskID_t>& RunnableTasksForJob(JobDescriptor* job_desc);
   bool UnbindTaskFromResource(TaskDescriptor* td_ptr, ResourceID_t res_id);
+  bool ResourceExceedsLimit(const ResourceVector& resource,
+                            const ResourceVector& limit);
   double DetermineTaskBurstinessCoeff(
       const deque<TaskPerfStatisticsSample>* stats);
   void DetermineCurrentTaskUsage(const ResourceVector& measured_usage,

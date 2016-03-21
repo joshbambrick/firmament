@@ -33,6 +33,11 @@
 #include "storage/reference_types.h"
 #include "storage/reference_utils.h"
 
+DECLARE_bool(enforce_cgroup_limits);
+
+DEFINE_bool(trust_cgroup_limits, true, "Whether to trust that cgroup "
+            "containment will successfully limit task resource usage.");
+
 DEFINE_uint64(heartbeat_interval, 1000000,
               "Heartbeat interval in microseconds.");
 
@@ -1132,9 +1137,7 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
         VLOG(1) << "Task " << task_id << " resource usage measured "
                 << ReservationResourceVectorToString(measured_usage)
                 << " vs limit " << ReservationResourceVectorToString(limit);
-        if (measured_usage.ram_cap() > limit.ram_cap()
-            || measured_usage.disk_bw() > limit.disk_bw()
-            || measured_usage.disk_cap() > limit.disk_cap()) {
+        if (ResourceExceedsLimit(measured_usage, limit)) {
           ExecutorInterface* exec = FindPtrOrNull(executors_,
                                                   task_scheduled_res_id);
           CHECK_NOTNULL(exec);
@@ -1220,6 +1223,18 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
 
       }
     }
+  }
+}
+
+bool EventDrivenScheduler::ResourceExceedsLimit(
+  const ResourceVector& resource,
+  const ResourceVector& limit) {
+  if (FLAGS_enforce_cgroup_limits && FLAGS_trust_cgroup_limits) {
+    return resource.disk_cap() > limit.disk_cap();
+  } else {
+    return resource.ram_cap() > limit.ram_cap()
+           || resource.disk_bw() > limit.disk_bw()
+           || resource.disk_cap() > limit.disk_cap();
   }
 }
 
