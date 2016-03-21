@@ -406,7 +406,7 @@ void Coordinator::FreeResources(ResourceVector resources_to_free) {
       }
     }
 
-    // the two resources are equal in every way
+    // The two resources are equal in every way.
     return true;
   };
 
