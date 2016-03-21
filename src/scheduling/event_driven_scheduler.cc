@@ -1054,13 +1054,13 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
       ResourceVector* reservations) {
   if (usage.has_ram_cap()) {
     uint64_t usage_ram = usage.ram_cap();
-    uint64_t safe_usage_ram = safe_usage.ram_cap();
+    uint64_t safe_usage_ram = max(usage_ram, safe_usage.ram_cap());
     uint64_t current_reservation_ram = reservations->ram_cap();
     uint64_t safety_ram =
         floor((1 + FLAGS_reservation_safety_margin) * safe_usage_ram);
     uint64_t updated_reservation_ram =
         (usage_ram > current_reservation_ram)
-            ? usage_ram * FLAGS_reservation_overshoot_boost
+            ? safe_usage_ram * FLAGS_reservation_overshoot_boost
             : current_reservation_ram * reservation_increment;
     updated_reservation_ram = min(max(updated_reservation_ram,
                                       safety_ram),
@@ -1070,13 +1070,13 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
 
   if (usage.has_disk_bw()) {
     uint64_t usage_disk_bw = usage.disk_bw();
-    uint64_t safe_usage_disk_bw = safe_usage.disk_bw();
+    uint64_t safe_usage_disk_bw = max(usage_disk_bw, safe_usage.disk_bw());
     uint64_t current_reservation_disk_bw = reservations->disk_bw();
     uint64_t safety_disk_bw =
         floor((1 + FLAGS_reservation_safety_margin) * safe_usage_disk_bw);
     uint64_t updated_reservation_disk_bw =
         (usage_disk_bw > current_reservation_disk_bw)
-            ? usage_disk_bw * FLAGS_reservation_overshoot_boost
+            ? safe_usage_disk_bw * FLAGS_reservation_overshoot_boost
             : current_reservation_disk_bw * reservation_increment;
     updated_reservation_disk_bw = min(max(updated_reservation_disk_bw,
                                           safety_disk_bw),
@@ -1086,13 +1086,13 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
 
   if (usage.has_disk_cap()) {
     uint64_t usage_disk_cap = usage.disk_cap();
-    uint64_t safe_usage_disk_cap = safe_usage.disk_cap();
+    uint64_t safe_usage_disk_cap = max(usage_disk_cap, safe_usage.disk_cap());
     uint64_t current_reservation_disk_cap = reservations->disk_cap();
     uint64_t safety_disk_cap =
         floor((1 + FLAGS_reservation_safety_margin) * safe_usage_disk_cap);
     uint64_t updated_reservation_disk_cap =
         (usage_disk_cap > current_reservation_disk_cap)
-            ? usage_disk_cap * FLAGS_reservation_overshoot_boost
+            ? safe_usage_disk_cap * FLAGS_reservation_overshoot_boost
             : current_reservation_disk_cap * reservation_increment;
     updated_reservation_disk_cap = min(max(updated_reservation_disk_cap,
                                           safety_disk_cap),
