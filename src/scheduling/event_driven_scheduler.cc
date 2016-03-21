@@ -1318,7 +1318,7 @@ void EventDrivenScheduler::DetermineCurrentTaskUsage(
 }
 
 void EventDrivenScheduler::ClearTaskResourceReservations(TaskID_t task_id) {
-  if (!FLAGS_enable_resource_reservation_decay) {
+  if (FLAGS_enable_resource_reservation_decay) {
     TaskDescriptor* td = FindPtrOrNull(*task_map_, task_id);
     CHECK_NOTNULL(td);
     ResourceID_t* res_id_ptr = BoundResourceForTask(task_id);
