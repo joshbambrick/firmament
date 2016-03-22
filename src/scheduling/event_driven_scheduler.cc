@@ -1298,9 +1298,9 @@ double EventDrivenScheduler::DetermineTaskBurstinessCoeff(
     var_disk_cap /= window_size;
 
     // Calculate Fano factor of usages
-    fano_ram_cap = var_ram_cap / mean_ram_cap;
-    fano_disk_bw = var_disk_bw / mean_disk_bw;
-    fano_disk_cap = var_disk_cap / mean_disk_cap;
+    fano_ram_cap = var_ram_cap / max(mean_ram_cap, 1);
+    fano_disk_bw = var_disk_bw / max(mean_disk_bw, 1);
+    fano_disk_cap = var_disk_cap / max(mean_disk_cap, 1);
   } else {
     if (stats->size() == 0) return 1;
 
@@ -1394,9 +1394,9 @@ double EventDrivenScheduler::DetermineTaskBurstinessCoeff(
         / static_cast<double>(decay_data->usages_included);
 
     // Calculate approximate Fano factor
-    fano_ram_cap = var_ram_cap / mean_ram_cap;
-    fano_disk_bw = var_disk_bw / mean_disk_bw;
-    fano_disk_cap = var_disk_cap / mean_disk_cap;
+    fano_ram_cap = var_ram_cap / max(mean_ram_cap, 1);
+    fano_disk_bw = var_disk_bw / max(mean_disk_bw, 1);
+    fano_disk_cap = var_disk_cap / max(mean_disk_cap, 1);
   }
 
   // Estimate burtiness coefficient for each resource
