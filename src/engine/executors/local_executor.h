@@ -30,7 +30,7 @@ extern "C" {
 #include "base/common.h"
 #include "base/types.h"
 #include "base/task_final_report.pb.h"
-#include "misc/container_disk_usage_tracker.h"
+#include "misc/container_monitor.h"
 #include "messages/task_heartbeat_message.pb.h"
 #include "messages/task_state_message.pb.h"
 #include "engine/executors/task_health_checker.h"
@@ -140,7 +140,7 @@ class LocalExecutor : public ExecutorInterface {
   boost::shared_mutex pid_map_mutex_;
   boost::shared_mutex task_finalize_message_map_mutex_;
   boost::shared_mutex task_container_names_map_mutex_;
-  boost::shared_mutex task_disk_tracker_map_mutex_;
+  boost::shared_mutex task_container_monitor_map_mutex_;
   boost::shared_mutex task_heartbeat_update_map_mutex_;
   boost::condition_variable exec_condvar_;
   // Map to each task's local handler thread
@@ -151,7 +151,8 @@ class LocalExecutor : public ExecutorInterface {
   unordered_map<TaskID_t, bool> task_running_;
   unordered_map<TaskID_t, bool> cleared_up_tasks_;
   unordered_map<TaskID_t, string> task_container_names_;
-  unordered_map<TaskID_t, ContainerDiskUsageTracker> task_disk_trackers_;
+  unordered_map<TaskID_t, shared_ptr<ContainerMonitor>>
+      task_container_monitors_;
   unordered_map<TaskID_t, uint64_t> task_heartbeat_sequence_numbers_;
   unordered_map<TaskID_t, bool> task_sent_perf_stats_;
 };

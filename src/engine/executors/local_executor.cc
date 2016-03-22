@@ -28,7 +28,7 @@ extern "C" {
 #include "base/units.h"
 #include "engine/executors/task_health_checker.h"
 #include "misc/utils.h"
-#include "misc/container_monitor_utils.h"
+#include "misc/container_monitor.h"
 #include "misc/uri_tools.h"
 #include "misc/map-util.h"
 
@@ -163,9 +163,9 @@ void LocalExecutor::CleanUpCompletedTask(const TaskDescriptor& td) {
   task_running_.erase(td.uid());
   task_heartbeat_sequence_numbers_.erase(td.uid());
   task_sent_perf_stats_.erase(td.uid());
-  boost::unique_lock<boost::shared_mutex> disk_tracker_lock(
-      task_disk_tracker_map_mutex_);
-  task_disk_trackers_.erase(td.uid());
+  boost::unique_lock<boost::shared_mutex> container_monitor_lock(
+      task_container_monitor_map_mutex_);
+  task_container_monitors_.erase(td.uid());
   ClearCompletedTaskFinalizeMessages(td.uid(), true);
 }
 
@@ -435,11 +435,17 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
     CHECK(InsertIfNotPresent(&task_container_names_, task_id, container_name));
     boost::unique_lock<boost::shared_mutex> running_lock(task_running_map_mutex_);
     CHECK(InsertIfNotPresent(&task_running_, task_id, true));
-    boost::unique_lock<boost::shared_mutex> disk_tracker_lock(
-        task_disk_tracker_map_mutex_);
+    boost::unique_lock<boost::shared_mutex> container_monitor_lock(
+        task_container_monitor_map_mutex_);
     string fs_dir = FLAGS_rootfs_base_dir + container_name + "/";
-    CHECK(InsertIfNotPresent(&task_disk_trackers_, task_id,
-                             ContainerDiskUsageTracker(fs_dir)));
+    string monitor_host = (FLAGS_container_monitor_host != "")
+        ? FLAGS_container_monitor_host
+        : URITools::GetHostnameFromURI(coordinator_uri_);
+    CHECK(InsertIfNotPresent(&task_container_monitors_, task_id,
+        shared_ptr<ContainerMonitor>(new ContainerMonitor(
+          FLAGS_container_monitor_port, monitor_host, container_name, fs_dir,
+          FLAGS_use_storage_resource_monitoring,
+          FLAGS_use_storage_resource_monitor_intialize_sync))));
   }
 
   pid = fork();
@@ -549,7 +555,6 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
       c->set_config_item(c, "lxc.cgroup.memory.limit_in_bytes", ram_cap);
     }
 
-
     string disk_bw = to_string(resource_reservations.disk_bw() * BYTES_TO_MB);
     if (disk_bw != "0" && FLAGS_blockdev_major_number != -1
         && FLAGS_blockdev_minor_number != -1) {
@@ -630,22 +635,16 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
   task_heartbeat.set_task_id(task_id);
   task_heartbeat.set_sequence_number(heartbeat_sequence_number);
   if (container_name) {
-    string monitor_host = (FLAGS_container_monitor_host != "")
-        ? FLAGS_container_monitor_host
-        : URITools::GetHostnameFromURI(coordinator_uri_);
-
     ResourceVector usage;
     bool usage_read = false;
 
     {
-      boost::unique_lock<boost::shared_mutex> disk_tracker_lock(
-              task_disk_tracker_map_mutex_);
-      ContainerDiskUsageTracker* task_disk_tracker =
-          FindOrNull(task_disk_trackers_, task_id);
-      CHECK_NOTNULL(task_disk_tracker);
-      usage_read = ContainerMonitorUtils::CreateResourceVector(
-          FLAGS_container_monitor_port, monitor_host, *container_name,
-          task_disk_tracker, &usage);
+      boost::unique_lock<boost::shared_mutex> container_monitor_lock(
+              task_container_monitor_map_mutex_);
+      shared_ptr<ContainerMonitor>* task_container_monitor =
+          FindOrNull(task_container_monitors_, task_id);
+      CHECK_NOTNULL(task_container_monitor);
+      usage_read = task_container_monitor->get()->CreateResourceVector(&usage);
     }
 
     bool* sent_perf_stats = FindOrNull(task_sent_perf_stats_, task_id);
@@ -654,28 +653,10 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
       TaskPerfStatisticsSample stats;
       stats.set_task_id(task_id);
       stats.set_timestamp(GetCurrentTimestamp());
-      if (usage.has_ram_cap() && usage.has_disk_bw()) {
-        ResourceVector* stats_usage = stats.mutable_resources();
-        stats_usage->CopyFrom(usage);
-
-        {
-          boost::unique_lock<boost::shared_mutex> disk_tracker_lock(
-              task_disk_tracker_map_mutex_);
-          ContainerDiskUsageTracker* task_disk_tracker =
-              FindOrNull(task_disk_trackers_, task_id);
-          CHECK_NOTNULL(task_disk_tracker);
-
-          if (FLAGS_use_storage_resource_monitoring) {
-            if (!task_disk_tracker->IsInitialized()
-                && FLAGS_use_storage_resource_monitor_intialize_sync) {
-              task_disk_tracker->Update();
-            }
-            if (task_disk_tracker->IsInitialized()) {
-              stats_usage->set_disk_cap(task_disk_tracker->GetFullDiskUsage() / BYTES_TO_MB);
-            }
-            UpdateTaskDiskTrackerAsync(task_id);
-          }
-        }
+      if (usage.has_ram_cap() && usage.has_disk_bw()
+          && (!FLAGS_use_storage_resource_monitoring
+              || usage.has_disk_cap())) {
+        stats.mutable_resources()->CopyFrom(usage);
       }
       task_heartbeat.mutable_stats()->CopyFrom(stats);
       InsertOrUpdate(&task_sent_perf_stats_, task_id, true);
@@ -822,20 +803,6 @@ void LocalExecutor::ReadFromPipe(int fd) {
   }
   fflush(stdout);
   CHECK_EQ(fclose(stream), 0);
-}
-
-void LocalExecutor::UpdateTaskDiskTrackerSync(TaskID_t task_id) {
-  boost::unique_lock<boost::shared_mutex> disk_tracker_lock(
-      task_disk_tracker_map_mutex_);
-  ContainerDiskUsageTracker* task_disk_tracker =
-      FindOrNull(task_disk_trackers_, task_id);
-  CHECK_NOTNULL(task_disk_tracker);
-  task_disk_tracker->Update();
-}
-
-void LocalExecutor::UpdateTaskDiskTrackerAsync(TaskID_t task_id) {
-  boost::thread async_update_thread(
-      boost::bind(&LocalExecutor::UpdateTaskDiskTrackerSync, this, task_id));
 }
 
 string LocalExecutor::GetTaskContainerName(TaskID_t task_id) {
