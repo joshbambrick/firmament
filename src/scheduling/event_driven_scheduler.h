@@ -110,7 +110,8 @@ class EventDrivenScheduler : public SchedulerInterface {
   bool ResourceExceedsLimit(const ResourceVector& resource,
                             const ResourceVector& limit);
   double DetermineTaskBurstinessCoeff(
-      const deque<TaskPerfStatisticsSample>* stats);
+    TaskID_t task_id,
+    const deque<TaskPerfStatisticsSample>* stats);
   void DetermineCurrentTaskUsage(const ResourceVector& measured_usage,
                                  const ResourceVector& prev_usage,
                                  ResourceVector* current_usage);

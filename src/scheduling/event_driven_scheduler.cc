@@ -71,6 +71,9 @@ DEFINE_bool(track_similar_task_usage_timeslices, false, "Should use similar "
 DEFINE_int64(tracked_usage_fixed_timeslices, -1, "How many timeslices to "
              "assign each task, if you want this to be fixed.");
 
+DEFINE_int64(approximate_burstiness_calculation_min_window_size, -1, "The "
+            "minimum window size to conside, if approximating burstiness");
+
 DEFINE_int64(burstiness_estimation_window_size, -1, "Coeff for exponential "
               "averaging new usage measurements, applied to new measurement");
 
@@ -1200,9 +1203,13 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
           double reservation_increment = FLAGS_reservation_increment;
           if (FLAGS_burstiness_estimation_window_size > 0) {
             // TODO(Josh): consider just multiplying by the coeff
-            reservation_increment = 
-                (reservation_increment
-                 + DetermineTaskBurstinessCoeff(full_stats)) / 2;
+            double burstiness_coeff =
+                DetermineTaskBurstinessCoeff(task_id, full_stats);
+            reservation_increment =
+                (reservation_increment + burstiness_coeff) / 2;
+            VLOG(1) << "Task " << task_id << " burstiness calculated as "
+                    << burstiness_coeff << " with reservation increment "
+                    << reservation_increment;
           }
 
           ResourceVector old_reservations(td_ptr->resource_reservations());
@@ -1239,55 +1246,158 @@ bool EventDrivenScheduler::ResourceExceedsLimit(
 }
 
 double EventDrivenScheduler::DetermineTaskBurstinessCoeff(
+    TaskID_t task_id,
     const deque<TaskPerfStatisticsSample>* stats) {
   CHECK_GT(FLAGS_burstiness_estimation_window_size, 0);
   uint64_t window_size = FLAGS_burstiness_estimation_window_size;
 
-  vector<ResourceVector> usages;
-  for (deque<TaskPerfStatisticsSample>::const_reverse_iterator it =
-           stats->crbegin();
-       it != stats->crend()
-       && usages.size() < window_size;
-       ++it) {
-    if (it->has_resources()) {
-      usages.push_back(it->resources());
+  double fano_ram_cap;
+  double fano_disk_bw;
+  double fano_disk_cap;
+
+  if (FLAGS_approximate_burstiness_calculation_min_window_size == -1) {
+    vector<ResourceVector> usages;
+    for (deque<TaskPerfStatisticsSample>::const_reverse_iterator it =
+             stats->crbegin();
+         it != stats->crend()
+         && usages.size() < window_size;
+         ++it) {
+      if (it->has_resources()) {
+        usages.push_back(it->resources());
+      }
     }
+
+    if (usages.size() != window_size) return 1;
+
+    // Calculate sums of usages
+    uint64_t sum_ram_cap = 0;
+    uint64_t sum_disk_bw = 0;
+    uint64_t sum_disk_cap = 0;
+    for (auto& usage : usages) {
+      sum_ram_cap += usage.ram_cap();
+      sum_disk_bw += usage.disk_bw();
+      sum_disk_cap += usage.disk_cap();
+    }
+
+    // Calculate mean usages
+    double mean_ram_cap = sum_ram_cap / usages.size();
+    double mean_disk_bw = sum_disk_bw / usages.size();
+    double mean_disk_cap = sum_disk_cap / usages.size();
+
+    // Calculate variances of usages
+    double var_ram_cap = 0;
+    double var_disk_bw = 0;
+    double var_disk_cap = 0;
+    for (auto& usage : usages) {
+        var_ram_cap += pow((usage.ram_cap() - mean_ram_cap), 2);
+        var_disk_bw += pow((usage.disk_bw() - mean_disk_bw), 2);
+        var_disk_cap += pow((usage.disk_cap() - mean_disk_cap), 2);
+    }
+    var_ram_cap /= window_size;
+    var_disk_bw /= window_size;
+    var_disk_cap /= window_size;
+
+    // Calculate Fano factor of usages
+    fano_ram_cap = var_ram_cap / mean_ram_cap;
+    fano_disk_bw = var_disk_bw / mean_disk_bw;
+    fano_disk_cap = var_disk_cap / mean_disk_cap;
+  } else {
+    if (stats->size() == 0) return 1;
+
+    CHECK_GT(FLAGS_approximate_burstiness_calculation_min_window_size, 0);
+    uint64_t min_window_size =
+        FLAGS_approximate_burstiness_calculation_min_window_size;
+
+    TaskReservationDecayData* decay_data = FindOrNull(
+        task_reservation_decay_data_,
+        task_id);
+    CHECK_NOTNULL(decay_data);
+
+    // Remove expired calculations from the equation
+    if (decay_data->usages_included == window_size) {
+      const ResourceVector& last_xs_diff = decay_data->xs_diffs.back();
+      const ResourceVector& last_usage = decay_data->usages.back();
+      decay_data->sum_xs_diff.set_ram_cap(
+          decay_data->sum_xs_diff.ram_cap() - last_xs_diff.ram_cap());
+      decay_data->sum_usage.set_ram_cap(
+          decay_data->sum_usage.ram_cap() - last_usage.ram_cap());
+      decay_data->sum_xs_diff.set_disk_bw(
+          decay_data->sum_xs_diff.disk_bw() - last_xs_diff.disk_bw());
+      decay_data->sum_usage.set_disk_bw(
+          decay_data->sum_usage.disk_bw() - last_usage.disk_bw());
+      decay_data->sum_xs_diff.set_disk_cap(
+          decay_data->sum_xs_diff.disk_cap() - last_xs_diff.disk_cap());
+      decay_data->sum_usage.set_disk_cap(
+          decay_data->sum_usage.disk_cap() - last_usage.disk_cap());
+      decay_data->xs_diffs.pop_back();
+      decay_data->usages.pop_back();
+    }
+
+    const ResourceVector latest_usage = stats->back().resources();
+
+    // Update the sum of usage values
+    decay_data->sum_usage.set_ram_cap(
+        decay_data->sum_usage.ram_cap() + latest_usage.ram_cap());
+    decay_data->sum_usage.set_disk_bw(
+        decay_data->sum_usage.disk_bw() + latest_usage.disk_bw());
+    decay_data->sum_usage.set_disk_cap(
+        decay_data->sum_usage.disk_cap() + latest_usage.disk_cap());
+
+    // Figure out the mean usage over all readings
+    double mean_ram_cap =
+        static_cast<double>(decay_data->sum_usage.ram_cap())
+        / static_cast<double>(decay_data->usages_included);
+    double mean_disk_bw =
+        static_cast<double>(decay_data->sum_usage.disk_bw())
+        / static_cast<double>(decay_data->usages_included);
+    double mean_disk_cap =
+        static_cast<double>(decay_data->sum_usage.disk_cap())
+        / static_cast<double>(decay_data->usages_included);
+
+
+    // Find value of the square of the difference of observed usage and mean
+    ResourceVector latest_xs_diff;
+    latest_xs_diff.set_ram_cap(pow(
+        max(latest_usage.ram_cap(), static_cast<uint64_t>(mean_ram_cap))
+        - min(latest_usage.ram_cap(), static_cast<uint64_t>(mean_ram_cap)),
+        2));
+    latest_xs_diff.set_disk_bw(pow(
+        max(latest_usage.disk_bw(), static_cast<uint64_t>(mean_disk_bw))
+        - min(latest_usage.disk_bw(), static_cast<uint64_t>(mean_disk_bw)),
+        2));
+    latest_xs_diff.set_disk_cap(pow(
+        max(latest_usage.disk_cap(), static_cast<uint64_t>(mean_disk_cap))
+        - min(latest_usage.disk_cap(), static_cast<uint64_t>(mean_disk_cap)),
+        2));
+
+    // Update sums of these squared values
+    decay_data->sum_xs_diff.set_ram_cap(
+        decay_data->sum_xs_diff.ram_cap() + latest_xs_diff.ram_cap());
+    decay_data->sum_xs_diff.set_disk_bw(
+        decay_data->sum_xs_diff.disk_bw() + latest_xs_diff.disk_bw());
+    decay_data->sum_xs_diff.set_disk_cap(
+        decay_data->sum_xs_diff.disk_cap() + latest_xs_diff.disk_cap());
+
+    decay_data->usages_included++;
+
+    if (decay_data->usages_included < min_window_size) return 1;
+
+    // Calculate approximate variance for each resource
+    double var_ram_cap =
+        static_cast<double>(decay_data->sum_xs_diff.ram_cap())
+        / static_cast<double>(decay_data->usages_included);
+    double var_disk_bw =
+        static_cast<double>(decay_data->sum_xs_diff.disk_bw())
+        / static_cast<double>(decay_data->usages_included);
+    double var_disk_cap =
+        static_cast<double>(decay_data->sum_xs_diff.disk_cap())
+        / static_cast<double>(decay_data->usages_included);
+
+    // Calculate approximate Fano factor
+    fano_ram_cap = var_ram_cap / mean_ram_cap;
+    fano_disk_bw = var_disk_bw / mean_disk_bw;
+    fano_disk_cap = var_disk_cap / mean_disk_cap;
   }
-
-  if (usages.size() != window_size) return 1;
-
-  // Calculate sums of usages
-  uint64_t sum_ram_cap = 0;
-  uint64_t sum_disk_bw = 0;
-  uint64_t sum_disk_cap = 0;
-  for (auto& usage : usages) {
-    sum_ram_cap += usage.ram_cap();
-    sum_disk_bw += usage.disk_bw();
-    sum_disk_cap += usage.disk_cap();
-  }
-
-  // Calculate mean usages
-  double mean_ram_cap = sum_ram_cap / usages.size();
-  double mean_disk_bw = sum_disk_bw / usages.size();
-  double mean_disk_cap = sum_disk_cap / usages.size();
-
-  // Calculate variances of usages
-  double var_ram_cap = 0;
-  double var_disk_bw = 0;
-  double var_disk_cap = 0;
-  for (auto& usage : usages) {
-      var_ram_cap += pow((usage.ram_cap() - mean_ram_cap), 2);
-      var_disk_bw += pow((usage.disk_bw() - mean_disk_bw), 2);
-      var_disk_cap += pow((usage.disk_cap() - mean_disk_cap), 2);
-  }
-  var_ram_cap /= window_size;
-  var_disk_bw /= window_size;
-  var_disk_cap /= window_size;
-
-  // Calculate Fano factor of usages
-  double fano_ram_cap = var_ram_cap / mean_ram_cap;
-  double fano_disk_bw = var_disk_bw / mean_disk_bw;
-  double fano_disk_cap = var_disk_cap / mean_disk_cap;
 
   // Estimate burtiness coefficient for each resource
   double burst_ram_cap =
