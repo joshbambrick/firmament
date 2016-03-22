@@ -110,11 +110,12 @@ class EventDrivenScheduler : public SchedulerInterface {
   bool ResourceExceedsLimit(const ResourceVector& resource,
                             const ResourceVector& limit);
   double DetermineTaskBurstinessCoeff(
-    TaskID_t task_id,
-    const deque<TaskPerfStatisticsSample>* stats);
-  void DetermineCurrentTaskUsage(const ResourceVector& measured_usage,
-                                 const ResourceVector& prev_usage,
-                                 ResourceVector* current_usage);
+      TaskID_t task_id,
+      const deque<TaskPerfStatisticsSample>* stats);
+  void DetermineCurrentTaskUsage(
+      const ResourceVector& measured_usage,
+      double* last_ram_cap, double* last_disk_bw, double* last_disk_cap,
+      ResourceVector* current_usage);
   void ClearTaskResourceReservations(TaskID_t task_id);
   bool EstimateTaskResourceUsageFromSimilarTasks(
       TaskDescriptor* td_ptr,
@@ -129,6 +130,7 @@ class EventDrivenScheduler : public SchedulerInterface {
                                       const ResourceVector& safe_usage,
                                       const ResourceVector& limit,
                                       double reservation_increment,
+                                      double safe_margin,
                                       ResourceVector* reservations);
   void UpdateMachineReservations(ResourceID_t res_id,
                                  const ResourceVector* old_reservations,

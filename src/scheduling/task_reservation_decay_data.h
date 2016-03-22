@@ -15,6 +15,11 @@ class TaskReservationDecayData {
     ResourceVector last_usage_estimate;
     bool usage_estimated = false;
     double usage_estimate_accuracy_rating = 0;
+    uint32_t decay_wait_counter = 0;
+    
+    double last_usage_ram_cap = 0;
+    double last_usage_disk_bw = 0;
+    double last_usage_disk_cap = 0;
 
     ResourceVector sum_xs_diff;
     ResourceVector sum_usage;
