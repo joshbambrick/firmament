@@ -116,8 +116,8 @@ class EventDrivenScheduler : public SchedulerInterface {
       ResourceVectorDouble* coeffs);
   void DetermineCurrentTaskUsage(
       const ResourceVector& measured_usage,
-      double* last_ram_cap, double* last_disk_bw, double* last_disk_cap,
-      ResourceVector* current_usage);
+      const ResourceVectorDouble& prev_usage,
+      ResourceVectorDouble* current_usage);
   void ClearTaskResourceReservations(TaskID_t task_id);
   bool EstimateTaskResourceUsageFromSimilarTasks(
       TaskDescriptor* td_ptr,
@@ -128,12 +128,32 @@ class EventDrivenScheduler : public SchedulerInterface {
   void DetermineWeightedAverage(const vector<ResourceVector>& resource_vectors,
                                 const vector<double>& weights,
                                 ResourceVector* weighted_average);
+  void DetermineWeightedAverage(const vector<ResourceVector>& resource_vectors,
+                                const vector<ResourceVectorDouble>& weights,
+                                ResourceVector* weighted_average);
+  void DetermineWeightedAverage(const vector<ResourceVector>& resource_vectors,
+                                const vector<ResourceVectorDouble>& weights,
+                                ResourceVectorDouble* weighted_average);
+  void DetermineWeightedAverage(
+      const vector<ResourceVectorDouble>& resource_vectors,
+      const vector<ResourceVectorDouble>& weights,
+      ResourceVectorDouble* weighted_average);
   void CalculateReservationsFromUsage(const ResourceVector& usage,
                                       const ResourceVector& safe_usage,
                                       const ResourceVector& limit,
                                       double reservation_increment,
                                       double safe_margin,
                                       ResourceVector* reservations);
+  void UpdateUsageAccuracyRating(const ResourceVector& measured_usage,
+                                 const ResourceVector& usage_estimate,
+                                 bool previously_estimated
+                                 double exponential_average_coeff,
+                                 ResourceVectorDouble* accuracy_ratings);
+  void CalculateExponentialAverageWeights(
+      double weight, vector<ResourceVectorDouble>* weight_pair);
+  void CalculateExponentialAverageWeights(
+      const ResourceVectorDouble& weights,
+      vector<ResourceVectorDouble>* weight_pair);
   void CalculateReservationsFromUsage(
       const ResourceVector& usage,
       const ResourceVector& safe_usage,
