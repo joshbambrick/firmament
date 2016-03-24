@@ -16,6 +16,7 @@
 #include "base/job_desc.pb.h"
 #include "base/task_desc.pb.h"
 #include "base/task_final_report.pb.h"
+#include "base/resource_vector_double.pb.h"
 #include "engine/executors/executor_interface.h"
 #include "engine/request_usages/request_usages.h"
 #include "misc/messaging_interface.h"
@@ -109,9 +110,10 @@ class EventDrivenScheduler : public SchedulerInterface {
   bool UnbindTaskFromResource(TaskDescriptor* td_ptr, ResourceID_t res_id);
   bool ResourceExceedsLimit(const ResourceVector& resource,
                             const ResourceVector& limit);
-  double DetermineTaskBurstinessCoeff(
+  void DetermineTaskBurstinessCoeffs(
       TaskID_t task_id,
-      const deque<TaskPerfStatisticsSample>* stats);
+      const deque<TaskPerfStatisticsSample>* stats,
+      ResourceVectorDouble* coeffs);
   void DetermineCurrentTaskUsage(
       const ResourceVector& measured_usage,
       double* last_ram_cap, double* last_disk_bw, double* last_disk_cap,
@@ -132,6 +134,13 @@ class EventDrivenScheduler : public SchedulerInterface {
                                       double reservation_increment,
                                       double safe_margin,
                                       ResourceVector* reservations);
+  void CalculateReservationsFromUsage(
+      const ResourceVector& usage,
+      const ResourceVector& safe_usage,
+      const ResourceVector& limit,
+      const ResourceVectorDouble& reservation_increments,
+      const ResourceVectorDouble& safe_margins,
+      ResourceVector* reservations);
   void UpdateMachineReservations(ResourceID_t res_id,
                                  const ResourceVector* old_reservations,
                                  const ResourceVector* new_reservations);
@@ -139,6 +148,7 @@ class EventDrivenScheduler : public SchedulerInterface {
       const vector<TaskUsageRecord>& usage_records,
       uint32_t min_index, uint32_t max_index, uint64_t percentile,
       TaskUsageRecord* median_record);
+  string ReservationResourceVectorToString(const ResourceVectorDouble& rv);
   string ReservationResourceVectorToString(const ResourceVector& rv);
 
   // Cached sets of runnable and blocked tasks; these are updated on each

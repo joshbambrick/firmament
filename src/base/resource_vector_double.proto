@@ -1,0 +1,12 @@
+// The Firmament project
+// Copyright (c) 2015 Malte Schwarzkopf <malte.schwarzkopf@cl.cam.ac.uk>
+//
+// Resource vector protobuf, with support for doubles.
+
+package firmament;
+
+message ResourceVectorDouble {
+  optional double ram_cap = 1 [default = 0];
+  optional double disk_bw = 2 [default = 0];
+  optional double disk_cap = 3 [default = 0];
+}

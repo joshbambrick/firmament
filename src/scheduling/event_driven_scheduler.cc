@@ -80,9 +80,6 @@ DEFINE_int64(burstiness_estimation_window_size, -1, "Coeff for exponential "
 DEFINE_double(burstiness_decay_dropoff, 0.5, "Dropoff affecting how much "
               "additional burstiness decreases reservation decay rate");
 
-DEFINE_double(burstiness_safety_dropoff, 0.5, "Dropoff affecting how much "
-              "additional burstiness increases safety margin");
-
 DEFINE_double(task_similarity_request_distance_weight_dropoff, 0.05, "Dropoff "
               "affecting how much additional resource request distance "
               "decreases the similarity of tasks");
@@ -100,10 +97,19 @@ DEFINE_int64(task_fail_timeout, 60, "Time (in seconds) after which to declare "
 DEFINE_double(reservation_safety_margin, 0.25,
              "Safety margin value for updating task reservations..");
 
-DEFINE_double(maximum_safety_margin, 1,
-             "Safety margin value for updating task reservations..");
+DEFINE_double(maximum_safety_margin, 2,
+             "Maximum safety margin value for updating task reservations.");
+
+DEFINE_double(minimum_safety_margin, 0.1,
+             "Minimum safety margin value for updating task reservations.");
+
+DEFINE_double(standard_burstiness_coefficient, 1, "What is the typical level "
+              "of burstiness that should produce standard behaviour.");
 
 DEFINE_double(reservation_increment, 0.9,
+             "Increment value for updating task reservations.");
+
+DEFINE_double(min_reservation_increment, 0.8,
              "Increment value for updating task reservations.");
 
 DEFINE_double(reservation_decay_interval, 10, "How many calls to "
@@ -1071,17 +1077,37 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
       double reservation_increment,
       double safe_margin,
       ResourceVector* reservations) {
+  ResourceVectorDouble reservation_increments;
+  reservation_increments.set_ram_cap(reservation_increment);
+  reservation_increments.set_disk_bw(reservation_increment);
+  reservation_increments.set_disk_cap(reservation_increment);
+  ResourceVectorDouble safety_margins;
+  safety_margins.set_ram_cap(safe_margin);
+  safety_margins.set_disk_bw(safe_margin);
+  safety_margins.set_disk_cap(safe_margin);
+  CalculateReservationsFromUsage(usage, safe_usage, limit,
+                                 reservation_increments, safety_margins,
+                                 reservations);
+}
+
+void EventDrivenScheduler::CalculateReservationsFromUsage(
+      const ResourceVector& usage,
+      const ResourceVector& safe_usage,
+      const ResourceVector& limit,
+      const ResourceVectorDouble& reservation_increments,
+      const ResourceVectorDouble& safe_margins,
+      ResourceVector* reservations) {
   if (usage.has_ram_cap()) {
     uint64_t usage_ram = usage.ram_cap();
     uint64_t safe_usage_ram = max(usage_ram, safe_usage.ram_cap());
     uint64_t current_reservation_ram = reservations->ram_cap();
     uint64_t safety_ram = max(
-        floor((1 + safe_margin) * usage_ram),
-        floor((1 + FLAGS_reservation_safety_margin) * safe_usage_ram));
+        ceil((1 + safe_margins.ram_cap()) * usage_ram),
+        ceil((1 + FLAGS_reservation_safety_margin) * safe_usage_ram));
     uint64_t updated_reservation_ram =
         (usage_ram > current_reservation_ram)
             ? safe_usage_ram * FLAGS_reservation_overshoot_boost
-            : current_reservation_ram * reservation_increment;
+            : current_reservation_ram * reservation_increments.ram_cap();
     updated_reservation_ram = min(max(updated_reservation_ram,
                                       safety_ram),
                                   limit.ram_cap());
@@ -1093,12 +1119,12 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
     uint64_t safe_usage_disk_bw = max(usage_disk_bw, safe_usage.disk_bw());
     uint64_t current_reservation_disk_bw = reservations->disk_bw();
     uint64_t safety_disk_bw = max(
-        floor((1 + safe_margin) * usage_disk_bw),
-        floor((1 + FLAGS_reservation_safety_margin) * safe_usage_disk_bw));
+        ceil((1 + safe_margins.disk_bw()) * usage_disk_bw),
+        ceil((1 + FLAGS_reservation_safety_margin) * safe_usage_disk_bw));
     uint64_t updated_reservation_disk_bw =
         (usage_disk_bw > current_reservation_disk_bw)
             ? safe_usage_disk_bw * FLAGS_reservation_overshoot_boost
-            : current_reservation_disk_bw * reservation_increment;
+            : current_reservation_disk_bw * reservation_increments.disk_bw();
     updated_reservation_disk_bw = min(max(updated_reservation_disk_bw,
                                           safety_disk_bw),
                                       limit.disk_bw());
@@ -1110,12 +1136,12 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
     uint64_t safe_usage_disk_cap = max(usage_disk_cap, safe_usage.disk_cap());
     uint64_t current_reservation_disk_cap = reservations->disk_cap();
     uint64_t safety_disk_cap = max(
-        floor((1 + safe_margin) * usage_disk_cap),
-        floor((1 + FLAGS_reservation_safety_margin) * safe_usage_disk_cap));
+        ceil((1 + safe_margins.disk_cap()) * usage_disk_cap),
+        ceil((1 + FLAGS_reservation_safety_margin) * safe_usage_disk_cap));
     uint64_t updated_reservation_disk_cap =
         (usage_disk_cap > current_reservation_disk_cap)
             ? safe_usage_disk_cap * FLAGS_reservation_overshoot_boost
-            : current_reservation_disk_cap * reservation_increment;
+            : current_reservation_disk_cap * reservation_increments.disk_cap();
     updated_reservation_disk_cap = min(max(updated_reservation_disk_cap,
                                           safety_disk_cap),
                                       limit.disk_cap());
@@ -1223,30 +1249,70 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
             }
           }
 
-          double reservation_increment = FLAGS_reservation_increment;
-          double safety_margin = FLAGS_reservation_safety_margin;
+          ResourceVectorDouble reservation_increments;
+          reservation_increments.set_ram_cap(FLAGS_reservation_increment);
+          reservation_increments.set_disk_bw(FLAGS_reservation_increment);
+          reservation_increments.set_disk_cap(FLAGS_reservation_increment);
+          ResourceVectorDouble safety_margins;
+          safety_margins.set_ram_cap(FLAGS_reservation_safety_margin);
+          safety_margins.set_disk_bw(FLAGS_reservation_safety_margin);
+          safety_margins.set_disk_cap(FLAGS_reservation_safety_margin);
           if (FLAGS_burstiness_estimation_window_size > 0) {
             // TODO(Josh): consider just multiplying by the coeff
-            double burstiness_coeff =
-                DetermineTaskBurstinessCoeff(task_id, full_stats);
+            ResourceVectorDouble burstiness_coeffs;
+            DetermineTaskBurstinessCoeffs(task_id, full_stats,
+                                          &burstiness_coeffs);
 
-            if (burstiness_coeff >= 0) {
-              double decay_burstiness_coeff =
-                  ScaleToLogistic(FLAGS_burstiness_decay_dropoff,
-                                  burstiness_coeff);
+            double min_burstiness_coeff =
+                min(min(burstiness_coeffs.ram_cap(),
+                    burstiness_coeffs.disk_cap()),
+                burstiness_coeffs.disk_bw());
 
-              reservation_increment =
-                  (reservation_increment + decay_burstiness_coeff) / 2.0;
-              double safety_burstiness_addition =
-                  2.0 * ScaleToLogistic(FLAGS_burstiness_safety_dropoff,
-                                        burstiness_coeff);
+            if (min_burstiness_coeff >= 0) {
+              // Varies with logistic function.
+              reservation_increments.set_ram_cap(
+                  max(ScaleToLogistic(FLAGS_burstiness_decay_dropoff,
+                                      burstiness_coeffs.ram_cap()),
+                      FLAGS_min_reservation_increment));
+              reservation_increments.set_disk_bw(
+                  max(ScaleToLogistic(FLAGS_burstiness_decay_dropoff,
+                                      burstiness_coeffs.disk_bw()),
+                      FLAGS_min_reservation_increment));
+              reservation_increments.set_disk_cap(
+                  max(ScaleToLogistic(FLAGS_burstiness_decay_dropoff,
+                                      burstiness_coeffs.disk_cap()),
+                      FLAGS_min_reservation_increment));
 
-              safety_margin = min(FLAGS_maximum_safety_margin,
-                                  safety_margin + safety_burstiness_addition);
+              // Linear and proportional but shifted so
+              // FLAGS standard_burstiness_coefficient maps to
+              // FLAGS_reservation_safety_margin, and clamped within a range
+              safety_margins.set_ram_cap(
+                  min(max(burstiness_coeffs.ram_cap()
+                              - FLAGS_standard_burstiness_coefficient
+                              + FLAGS_reservation_safety_margin,
+                          FLAGS_minimum_safety_margin),
+                      FLAGS_maximum_safety_margin));
+              safety_margins.set_disk_bw(
+                  min(max(burstiness_coeffs.disk_bw()
+                              - FLAGS_standard_burstiness_coefficient
+                              + FLAGS_reservation_safety_margin,
+                          FLAGS_minimum_safety_margin),
+                      FLAGS_maximum_safety_margin));
+              safety_margins.set_disk_cap(
+                  min(max(burstiness_coeffs.disk_cap()
+                              - FLAGS_standard_burstiness_coefficient
+                              + FLAGS_reservation_safety_margin,
+                          FLAGS_minimum_safety_margin),
+                      FLAGS_maximum_safety_margin));
+
+
               VLOG(1) << "Task " << task_id << " burstiness calculated as "
-                      << burstiness_coeff << " with reservation increment "
-                      << reservation_increment << " and safey margin "
-                      << safety_margin;
+                      << ReservationResourceVectorToString(burstiness_coeffs)
+                      << " with reservation increment "
+                      << ReservationResourceVectorToString(
+                            reservation_increments)
+                      << " and safety margin "
+                      << ReservationResourceVectorToString(safety_margins);
             } else {
               VLOG(1) << "Task " << task_id << " burstiness not yet available";
             }
@@ -1257,15 +1323,17 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
           if (FLAGS_reservation_decay_interval == decay_data->decay_wait_counter) {
             decay_data->decay_wait_counter = 0;
           } else {
-            reservation_increment = 1;
+            reservation_increments.set_ram_cap(1);
+            reservation_increments.set_disk_bw(1);
+            reservation_increments.set_disk_cap(1);
           }
 
           ResourceVector old_reservations(td_ptr->resource_reservations());
           CalculateReservationsFromUsage(next_timeslice_usage,
                                          measured_usage,
                                          limit,
-                                         reservation_increment,
-                                         safety_margin,
+                                         reservation_increments,
+                                         safety_margins,
                                          reservations);
 
           VLOG(1) << "Updated resource reservations for task " << task_id
@@ -1294,11 +1362,16 @@ bool EventDrivenScheduler::ResourceExceedsLimit(
   }
 }
 
-double EventDrivenScheduler::DetermineTaskBurstinessCoeff(
+void EventDrivenScheduler::DetermineTaskBurstinessCoeffs(
     TaskID_t task_id,
-    const deque<TaskPerfStatisticsSample>* stats) {
+    const deque<TaskPerfStatisticsSample>* stats,
+    ResourceVectorDouble* coeffs) {
   CHECK_GT(FLAGS_burstiness_estimation_window_size, 0);
   uint64_t window_size = FLAGS_burstiness_estimation_window_size;
+
+  coeffs->set_ram_cap(-1);
+  coeffs->set_disk_bw(-1);
+  coeffs->set_disk_cap(-1);
 
   double fano_ram_cap;
   double fano_disk_bw;
@@ -1316,7 +1389,7 @@ double EventDrivenScheduler::DetermineTaskBurstinessCoeff(
       }
     }
 
-    if (usages.size() != window_size) return -1;
+    if (usages.size() != window_size) return;
 
     // Calculate sums of usages
     uint64_t sum_ram_cap = 0;
@@ -1351,9 +1424,10 @@ double EventDrivenScheduler::DetermineTaskBurstinessCoeff(
     fano_disk_bw = var_disk_bw / max(mean_disk_bw, 1.0);
     fano_disk_cap = var_disk_cap / max(mean_disk_cap, 1.0);
   } else {
-    if (stats->size() == 0) return -1;
+    if (stats->size() == 0) return;
 
     CHECK_GT(FLAGS_approximate_burstiness_calculation_min_window_size, 0);
+    uint64_t max_window_size = window_size;
     uint64_t min_window_size =
         FLAGS_approximate_burstiness_calculation_min_window_size;
 
@@ -1363,7 +1437,7 @@ double EventDrivenScheduler::DetermineTaskBurstinessCoeff(
     CHECK_NOTNULL(decay_data);
 
     // Remove expired calculations from the equation
-    if (decay_data->usages_included == window_size) {
+    if (decay_data->usages_included == max_window_size) {
       const ResourceVector& last_xs_diff = decay_data->xs_diffs.back();
       const ResourceVector& last_usage = decay_data->usages.back();
       decay_data->sum_xs_diff.set_ram_cap(
@@ -1381,6 +1455,62 @@ double EventDrivenScheduler::DetermineTaskBurstinessCoeff(
       decay_data->xs_diffs.pop_back();
       decay_data->usages.pop_back();
       decay_data->usages_included--;
+    } else if (decay_data->usages_included == min_window_size) {
+      // Reached the min window size for the first time, so go through and
+      // calculate everyting properly
+
+      // TODO(Josh): obviously, there's some duplication here, extract this
+      // into a separate function
+      decay_data->sum_usage.set_ram_cap(0);
+      decay_data->sum_usage.set_disk_bw(0);
+      decay_data->sum_usage.set_disk_cap(0);
+      for (auto& usage: decay_data->usages) {
+        decay_data->sum_usage.set_ram_cap(
+            decay_data->sum_usage.ram_cap() + usage.ram_cap());
+        decay_data->sum_usage.set_disk_bw(
+            decay_data->sum_usage.disk_bw() + usage.disk_bw());
+        decay_data->sum_usage.set_disk_cap(
+            decay_data->sum_usage.disk_cap() + usage.disk_cap());
+      }
+
+      decay_data->sum_xs_diff.set_ram_cap(0);
+      decay_data->sum_xs_diff.set_disk_bw(0);
+      decay_data->sum_xs_diff.set_disk_cap(0);
+
+      double mean_ram_cap =
+          static_cast<double>(decay_data->sum_usage.ram_cap())
+          / static_cast<double>(decay_data->usages_included);
+      double mean_disk_bw =
+          static_cast<double>(decay_data->sum_usage.disk_bw())
+          / static_cast<double>(decay_data->usages_included);
+      double mean_disk_cap =
+          static_cast<double>(decay_data->sum_usage.disk_cap())
+          / static_cast<double>(decay_data->usages_included);
+      for (auto& usage: decay_data->usages) {
+        ResourceVector xs_diff;
+        xs_diff.set_ram_cap(pow(
+            max(usage.ram_cap(), static_cast<uint64_t>(mean_ram_cap))
+            - min(usage.ram_cap(), static_cast<uint64_t>(mean_ram_cap)),
+            2));
+        xs_diff.set_disk_bw(pow(
+            max(usage.disk_bw(), static_cast<uint64_t>(mean_disk_bw))
+            - min(usage.disk_bw(), static_cast<uint64_t>(mean_disk_bw)),
+            2));
+        xs_diff.set_disk_cap(pow(
+            max(usage.disk_cap(), static_cast<uint64_t>(mean_disk_cap))
+            - min(usage.disk_cap(), static_cast<uint64_t>(mean_disk_cap)),
+            2));
+        decay_data->sum_xs_diff.set_ram_cap(
+            decay_data->sum_xs_diff.ram_cap() + xs_diff.ram_cap());
+        decay_data->sum_xs_diff.set_disk_bw(
+            decay_data->sum_xs_diff.disk_bw() + xs_diff.disk_bw());
+        decay_data->sum_xs_diff.set_disk_cap(
+            decay_data->sum_xs_diff.disk_cap() + xs_diff.disk_cap());
+        // Remove value from the back
+        decay_data->xs_diffs.pop_back();
+        // Add new value to the front
+        decay_data->xs_diffs.push_front(xs_diff);
+      }
     }
 
     const ResourceVector latest_usage = stats->back().resources();
@@ -1433,7 +1563,7 @@ double EventDrivenScheduler::DetermineTaskBurstinessCoeff(
 
     decay_data->usages_included++;
 
-    if (decay_data->usages_included < min_window_size) return -1;
+    if (decay_data->usages_included < min_window_size) return;
 
     // Calculate approximate variance for each resource
     double var_ram_cap =
@@ -1452,8 +1582,9 @@ double EventDrivenScheduler::DetermineTaskBurstinessCoeff(
     fano_disk_cap = var_disk_cap / max(mean_disk_cap, 1.0);
   }
 
-  // Return the max burstiness coefficient
-  return max(fano_ram_cap, max(fano_disk_bw, fano_disk_cap));
+  coeffs->set_ram_cap(fano_ram_cap);
+  coeffs->set_disk_bw(fano_disk_bw);
+  coeffs->set_disk_cap(fano_disk_cap);
 }
 
 void EventDrivenScheduler::DetermineCurrentTaskUsage(
@@ -1577,12 +1708,22 @@ vector<TaskStateMessage> EventDrivenScheduler::CreateTaskStateChanges() {
 }
 
 string EventDrivenScheduler::ReservationResourceVectorToString(
-    const ResourceVector& rv) {
+    const ResourceVectorDouble& rv) {
   stringstream out;
   out << rv.ram_cap() << "/";
   out << rv.disk_bw() << "/";
   out << rv.disk_cap() << "/";
   return out.str();
+}
+
+
+string EventDrivenScheduler::ReservationResourceVectorToString(
+    const ResourceVector& rv) {
+  ResourceVectorDouble double_vector;
+  double_vector.set_ram_cap(rv.ram_cap());
+  double_vector.set_disk_bw(rv.disk_bw());
+  double_vector.set_disk_cap(rv.disk_cap());
+  return ReservationResourceVectorToString(double_vector);
 }
 
 }  // namespace scheduler
