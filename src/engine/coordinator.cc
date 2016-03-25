@@ -29,7 +29,7 @@
 #include "misc/pb_utils.h"
 #include "misc/protobuf_envelope.h"
 #include "misc/map-util.h"
-#include "misc/container_monitor_utils.h"
+#include "misc/container_monitor.h"
 #include "misc/utils.h"
 #include "scheduling/flow/flow_scheduler.h"
 #include "scheduling/knowledge_base.h"
@@ -1211,7 +1211,7 @@ const string Coordinator::SubmitJob(const JobDescriptor& job_descriptor) {
 }
 
 void Coordinator::CreateContainerMonitor() {
-  ContainerMonitorUtils::StartContainerMonitor(FLAGS_container_monitor_port);
+  ContainerMonitor::StartContainerMonitor(FLAGS_container_monitor_port);
 }
 
 void Coordinator::Shutdown(const string& reason) {
