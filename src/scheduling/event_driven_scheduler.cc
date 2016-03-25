@@ -100,7 +100,7 @@ DEFINE_int64(task_fail_timeout, 60, "Time (in seconds) after which to declare "
 DEFINE_double(reservation_safety_margin, 0.25,
              "Safety margin value for updating task reservations..");
 
-DEFINE_double(maximum_safety_margin, 2,
+DEFINE_double(maximum_safety_margin, 1,
              "Maximum safety margin value for updating task reservations.");
 
 DEFINE_double(minimum_safety_margin, 0.1,
@@ -1107,20 +1107,22 @@ void EventDrivenScheduler::DetermineWeightedAverage(
     total_weights.set_disk_cap(weight.disk_cap() + total_weights.disk_cap());
   }
 
+  ResourceVectorDouble new_weighted_average;
   for (uint32_t i = 0; i < resource_vectors.size(); ++i) {
     double record_ram_cap = weights[i].ram_cap() / total_weights.ram_cap();
-    weighted_average->set_ram_cap(
-        weighted_average->ram_cap() +
+    new_weighted_average.set_ram_cap(
+        new_weighted_average.ram_cap() +
         (resource_vectors[i].ram_cap() * record_ram_cap));
     double record_disk_bw = weights[i].disk_bw() / total_weights.disk_bw();
-    weighted_average->set_disk_bw(
-        weighted_average->disk_bw() +
+    new_weighted_average.set_disk_bw(
+        new_weighted_average.disk_bw() +
         (resource_vectors[i].disk_bw() * record_disk_bw));
     double record_disk_cap = weights[i].disk_cap() / total_weights.disk_cap();
-    weighted_average->set_disk_cap(
-        weighted_average->disk_cap() +
+    new_weighted_average.set_disk_cap(
+        new_weighted_average.disk_cap() +
         (resource_vectors[i].disk_cap() * record_disk_cap));
   }
+  weighted_average->CopyFrom(new_weighted_average);
 }
 
 void EventDrivenScheduler::CalculateReservationsFromUsage(
@@ -1211,6 +1213,7 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
 void EventDrivenScheduler::UpdateTaskResourceReservations() {
   if (!FLAGS_enable_resource_reservation_decay) return;
 
+
   for (thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
            = task_map_->begin();
        it != task_map_->end(); it++) {
@@ -1233,6 +1236,7 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
       CHECK_NOTNULL(decay_data);
       ResourceVector* reservations = td_ptr->mutable_resource_reservations();
 
+
       if (reservations && latest_stats && latest_stats->has_resources()) {
         const ResourceVector limit = td_ptr->resource_request();
         const ResourceVector measured_usage = latest_stats->resources();
@@ -1245,7 +1249,18 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
           CHECK_NOTNULL(exec);
           exec->SendAbortMessage(td_ptr);
         } else {
-          if (decay_data->usage_measured) {
+          ResourceVectorDouble last_usage_accuracy;
+          bool usage_measured = decay_data->usage_measured;
+          if (usage_measured) {
+            ResourceVector previous_usage;
+            previous_usage.set_ram_cap(
+                decay_data->last_usage_calculated.ram_cap());
+            previous_usage.set_disk_bw(
+                decay_data->last_usage_calculated.disk_bw());
+            previous_usage.set_disk_cap(
+                decay_data->last_usage_calculated.disk_cap());
+            DetermineUsageAccuracyRating(
+                measured_usage, previous_usage, &last_usage_accuracy);
             DetermineCurrentTaskUsage(
                 measured_usage,
                 decay_data->last_usage_calculated,
@@ -1304,33 +1319,29 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
               decay_data->usage_estimate_rated = true;
             }
 
-            bool usage_estimated = EstimateTaskResourceUsageFromSimilarTasks(
-                td_ptr, timeslice, task_scheduled_res_id,
-                &decay_data->last_usage_estimate);
+            decay_data->usage_estimated =
+                EstimateTaskResourceUsageFromSimilarTasks(
+                    td_ptr, timeslice, task_scheduled_res_id,
+                    &decay_data->last_usage_estimate);
 
-            decay_data->usage_estimated = usage_estimated;
 
-            if (usage_estimated) {
+            if (decay_data->usage_estimated) {
               vector<ResourceVectorDouble> weights;
-              if (decay_data->usage_estimate_rated) {
-                CalculateExponentialAverageWeights(
-                    decay_data->usage_estimate_accuracy_ratings, &weights);
+              if (decay_data->usage_estimate_rated && usage_measured) {
+                  weights =
+                      {decay_data->usage_estimate_accuracy_ratings,
+                       last_usage_accuracy};
               } else {
                 CalculateExponentialAverageWeights(0.5, &weights);
               }
 
-              ResourceVector usage_calculated;
-              usage_calculated.set_ram_cap(
-                  decay_data->last_usage_calculated.ram_cap());
-              usage_calculated.set_disk_bw(
-                  decay_data->last_usage_calculated.disk_bw());
-              usage_calculated.set_disk_cap(
-                  decay_data->last_usage_calculated.disk_cap());
-
               DetermineWeightedAverage({decay_data->last_usage_estimate,
-                                        usage_calculated},
+                                        next_timeslice_usage},
                                        weights,
                                        &next_timeslice_usage);
+              LOG(INFO) << "Task usage for next timeslice estimated as "
+                        << ReservationResourceVectorToString(
+                              next_timeslice_usage);
             }
           }
 
@@ -1675,14 +1686,14 @@ void EventDrivenScheduler::DetermineCurrentTaskUsage(
     const ResourceVector& measured_usage,
     const ResourceVectorDouble& prev_usage,
     ResourceVectorDouble* current_usage) {
+  ResourceVectorDouble measured_usage_double;
+  measured_usage_double.set_ram_cap(measured_usage.ram_cap());
+  measured_usage_double.set_disk_bw(measured_usage.disk_bw());
+  measured_usage_double.set_disk_cap(measured_usage.disk_cap());
   if (FLAGS_usage_averaging_coeff == -1) {
-    current_usage->CopyFrom(measured_usage);
+    current_usage->CopyFrom(measured_usage_double);
   } else {
     CHECK_GT(FLAGS_usage_averaging_coeff, 0);
-    ResourceVectorDouble measured_usage_double;
-    measured_usage_double.set_ram_cap(measured_usage.ram_cap());
-    measured_usage_double.set_disk_bw(measured_usage.disk_bw());
-    measured_usage_double.set_disk_cap(measured_usage.disk_cap());
     vector<ResourceVectorDouble> weights;
     CalculateExponentialAverageWeights(FLAGS_usage_averaging_coeff, &weights);
     DetermineWeightedAverage(
@@ -1692,6 +1703,32 @@ void EventDrivenScheduler::DetermineCurrentTaskUsage(
   }
 }
 
+void EventDrivenScheduler::DetermineUsageAccuracyRating(
+    const ResourceVector& measured_usage,
+    const ResourceVector& usage_estimate,
+    ResourceVectorDouble* accuracy_ratings) {
+  double diff_ram_cap =
+      max(measured_usage.ram_cap(), usage_estimate.ram_cap())
+       - min(measured_usage.ram_cap(), usage_estimate.ram_cap());
+  double mean_ram_cap =
+      (measured_usage.ram_cap() + usage_estimate.ram_cap()) / 2.0;
+  accuracy_ratings->set_ram_cap(mean_ram_cap / diff_ram_cap);
+
+  double diff_disk_cap =
+      max(measured_usage.disk_cap(), usage_estimate.disk_cap())
+       - min(measured_usage.disk_cap(), usage_estimate.disk_cap());
+  double mean_disk_cap =
+      (measured_usage.disk_cap() + usage_estimate.disk_cap()) / 2.0;
+  accuracy_ratings->set_disk_cap(mean_disk_cap / diff_disk_cap);
+
+  double diff_disk_bw =
+      max(measured_usage.disk_bw(), usage_estimate.disk_bw())
+       - min(measured_usage.disk_bw(), usage_estimate.disk_bw());
+  double mean_disk_bw =
+      (measured_usage.disk_bw() + usage_estimate.disk_bw()) / 2.0;
+  accuracy_ratings->set_disk_bw(mean_disk_bw / diff_disk_bw);
+}
+
 void EventDrivenScheduler::UpdateUsageAccuracyRating(
     const ResourceVector& measured_usage,
     const ResourceVector& usage_estimate,
@@ -1699,30 +1736,13 @@ void EventDrivenScheduler::UpdateUsageAccuracyRating(
     double exponential_average_coeff,
     ResourceVectorDouble* averaged_accuracy_ratings) {
   ResourceVectorDouble new_accuracy_ratings;
-  double diff_ram_cap =
-      max(measured_usage.ram_cap(), usage_estimate.ram_cap())
-       - min(measured_usage.ram_cap(), usage_estimate.ram_cap());
-  double mean_ram_cap =
-      (measured_usage.ram_cap() + usage_estimate.ram_cap()) / 2.0;
-  new_accuracy_ratings.set_ram_cap(diff_ram_cap / mean_ram_cap);
-  double diff_disk_cap =
-      max(measured_usage.disk_cap(), usage_estimate.disk_cap())
-       - min(measured_usage.disk_cap(), usage_estimate.disk_cap());
-  double mean_disk_cap =
-      (measured_usage.disk_cap() + usage_estimate.disk_cap()) / 2.0;
-  new_accuracy_ratings.set_disk_cap(diff_disk_cap / mean_disk_cap);
-  double diff_disk_bw =
-      max(measured_usage.disk_bw(), usage_estimate.disk_bw())
-       - min(measured_usage.disk_bw(), usage_estimate.disk_bw());
-  double mean_disk_bw =
-      (measured_usage.disk_bw() + usage_estimate.disk_bw()) / 2.0;
-  new_accuracy_ratings.set_disk_bw(diff_disk_bw / mean_disk_bw);
-
+  DetermineUsageAccuracyRating(measured_usage, usage_estimate,
+                               &new_accuracy_ratings);
   if (previously_estimated) {
     vector<ResourceVectorDouble> weights;
     CalculateExponentialAverageWeights(exponential_average_coeff, &weights);
     DetermineWeightedAverage(
-        {usage_estimate, measured_usage},
+        {new_accuracy_ratings, *averaged_accuracy_ratings},
         weights, averaged_accuracy_ratings);
   } else {
     averaged_accuracy_ratings->CopyFrom(new_accuracy_ratings);

@@ -144,6 +144,9 @@ class EventDrivenScheduler : public SchedulerInterface {
                                       double reservation_increment,
                                       double safe_margin,
                                       ResourceVector* reservations);
+  void DetermineUsageAccuracyRating(const ResourceVector& measured_usage,
+                                    const ResourceVector& usage_estimate,
+                                    ResourceVectorDouble* accuracy_ratings);
   void UpdateUsageAccuracyRating(const ResourceVector& measured_usage,
                                  const ResourceVector& usage_estimate,
                                  bool previously_estimated,
