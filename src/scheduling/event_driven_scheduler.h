@@ -146,7 +146,7 @@ class EventDrivenScheduler : public SchedulerInterface {
                                       ResourceVector* reservations);
   void UpdateUsageAccuracyRating(const ResourceVector& measured_usage,
                                  const ResourceVector& usage_estimate,
-                                 bool previously_estimated
+                                 bool previously_estimated,
                                  double exponential_average_coeff,
                                  ResourceVectorDouble* accuracy_ratings);
   void CalculateExponentialAverageWeights(

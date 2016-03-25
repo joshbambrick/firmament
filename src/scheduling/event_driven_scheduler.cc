@@ -1298,8 +1298,8 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
             if (decay_data->usage_estimated) {
               UpdateUsageAccuracyRating(
                   measured_usage, decay_data->last_usage_estimate,
-                  FLAGS_accuracy_averaging_coeff,
                   decay_data->usage_estimate_rated,
+                  FLAGS_accuracy_averaging_coeff,
                   &decay_data->usage_estimate_accuracy_ratings);
               decay_data->usage_estimate_rated = true;
             }
@@ -1695,7 +1695,7 @@ void EventDrivenScheduler::DetermineCurrentTaskUsage(
 void EventDrivenScheduler::UpdateUsageAccuracyRating(
     const ResourceVector& measured_usage,
     const ResourceVector& usage_estimate,
-    bool previously_estimated
+    bool previously_estimated,
     double exponential_average_coeff,
     ResourceVectorDouble* averaged_accuracy_ratings) {
   ResourceVectorDouble new_accuracy_ratings;
@@ -1725,7 +1725,7 @@ void EventDrivenScheduler::UpdateUsageAccuracyRating(
         {usage_estimate, measured_usage},
         weights, averaged_accuracy_ratings);
   } else {
-    averaged_accuracy_ratings.CopyFrom(new_accuracy_ratings);
+    averaged_accuracy_ratings->CopyFrom(new_accuracy_ratings);
   }
 }
 
