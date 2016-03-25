@@ -53,6 +53,8 @@ DEFINE_int32(http_ui_port, 8080,
         "The port that the HTTP UI will be served on; -1 to disable.");
 #endif
 DECLARE_uint64(heartbeat_interval);
+DEFINE_uint64(overreserved_wait_period, 10, "How many checks that find "
+              "reservations exceed capacity before tasks are pre-empted.");
 DEFINE_uint64(monitor_resource_usage_interval, 10000000,
               "Monitor resources interval in microseconds.");
 DEFINE_bool(populate_knowledge_base_from_file, false,
@@ -340,11 +342,11 @@ bool Coordinator::HasJobCompleted(const JobDescriptor& jd) {
 void Coordinator::MonitorResourceUsage() {
   while (true) {
     usleep(FLAGS_monitor_resource_usage_interval);
+    bool reservation_too_high = false;
     const ResourceVector* machine_reservations =
           scheduler_->knowledge_base()->GetMachineReservations(machine_uuid_);
 
     if (machine_reservations) {
-      bool reservation_too_high = false;
       ResourceVector reservations_to_free;
 
       if (machine_reservations->ram_cap() > machine_capacity_.ram_cap()) {
@@ -366,8 +368,16 @@ void Coordinator::MonitorResourceUsage() {
       }
 
       if (reservation_too_high) {
-        FreeResources(reservations_to_free);
+        reservation_exceeded_counter_++;
+        if (reservation_exceeded_counter_ == FLAGS_overreserved_wait_period) {
+          FreeResources(reservations_to_free);
+          reservation_too_high = false;
+        }
       }
+    }
+
+    if (!reservation_too_high) {
+      reservation_exceeded_counter_ = 0;
     }
   }
 }

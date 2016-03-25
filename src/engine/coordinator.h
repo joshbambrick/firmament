@@ -308,6 +308,8 @@ class Coordinator : public Node,
   ResourceVector machine_capacity_;
   // Local machine's host name
   const string hostname_;
+  // Consecutive observations of resource reservations exceeding capacity
+  uint64_t reservation_exceeded_counter_ = 0;
 };
 
 }  // namespace firmament
