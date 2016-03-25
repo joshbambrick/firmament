@@ -50,6 +50,9 @@ class RequestUsages {
     uint32_t number_of_points_ = 0;
     uint32_t record_list_size_ = 0;
     ANNkd_tree* tree_ = NULL;
+    double mean_ram_cap_ = 0;
+    double mean_disk_bw_ = 0;
+    double mean_disk_cap_ = 0;
 };
 } // namespace firmament
 

@@ -78,12 +78,25 @@ void RequestUsages::AddToTree(UsageRecordList new_record_list) {
 
   if (rebuild_tree) {
     usage_record_lists_in_tree_.clear();
+    uint64_t sum_ram_cap = 0;
+    uint64_t sum_disk_bw = 0;
+    uint64_t sum_disk_cap = 0;
+    for (auto& usage_record : usage_record_lists_) {
+      sum_ram_cap += usage_record.request.ram_cap;
+      sum_disk_bw += usage_record.request.disk_bw;
+      sum_disk_cap += usage_record.request.disk_cap;
+    }
+    mean_ram_cap_ = static_cast<double>(sum_ram_cap)
+                    / static_cast<double>(record_list_size_);
+    mean_disk_bw_ = static_cast<double>(sum_disk_bw)
+                    / static_cast<double>(record_list_size_);
+    mean_disk_cap_ = static_cast<double>(sum_disk_cap)
+                    / static_cast<double>(record_list_size_);
+
     uint32_t i = 0;
-    for (list<UsageRecordList>::iterator it = usage_record_lists_.begin();
-         it != usage_record_lists_.end();
-         ++it) {
-      request_data_points_[i] = CreateRequestPoint(it->request);
-      usage_record_lists_in_tree_.push_back(&(*it));
+    for (auto& usage_record : usage_record_lists_) {
+      request_data_points_[i] = CreateRequestPoint(usage_record.request);
+      usage_record_lists_in_tree_.push_back(&usage_record);
       i++;
     }
 
@@ -96,9 +109,9 @@ void RequestUsages::AddToTree(UsageRecordList new_record_list) {
 
 ANNpoint RequestUsages::CreateRequestPoint(Request request) {
   ANNpoint point = annAllocPt(number_of_dimensions_);
-  point[0] = request.ram_cap;
-  point[1] = request.disk_bw;
-  point[2] = request.disk_cap;
+  point[0] = request.ram_cap / mean_ram_cap_;
+  point[1] = request.disk_bw / mean_disk_bw_;
+  point[2] = request.disk_cap / mean_disk_cap_;
   return point;
 }
 
