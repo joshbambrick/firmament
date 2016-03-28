@@ -14,7 +14,10 @@ class TaskReservationDecayData {
     ResourceVectorDouble last_usage_calculated;
     bool usage_measured = false;
     ResourceVector last_usage_estimate;
+    ResourceVector last_combined_usage_estimate;
     bool usage_estimated = false;
+    bool last_usage_rated = false;
+    ResourceVectorDouble last_usage_accuracy_ratings;
     bool usage_estimate_rated = false;
     ResourceVectorDouble usage_estimate_accuracy_ratings;
     uint32_t decay_wait_counter = 0;

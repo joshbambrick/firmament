@@ -88,10 +88,13 @@ void RequestUsages::AddToTree(UsageRecordList new_record_list) {
     }
     mean_ram_cap_ = static_cast<double>(sum_ram_cap)
                     / static_cast<double>(record_list_size_);
+    mean_ram_cap_ = max(mean_ram_cap_, 1.0);
     mean_disk_bw_ = static_cast<double>(sum_disk_bw)
                     / static_cast<double>(record_list_size_);
+    mean_disk_bw_ = max(mean_disk_bw_, 1.0);
     mean_disk_cap_ = static_cast<double>(sum_disk_cap)
                     / static_cast<double>(record_list_size_);
+    mean_disk_cap_ = max(mean_disk_cap_, 1.0);
 
     uint32_t i = 0;
     for (auto& usage_record : usage_record_lists_) {

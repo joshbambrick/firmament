@@ -68,11 +68,17 @@ DEFINE_int32(similar_resource_max_tracked_tasks, 16384, "Max number of tasks"
 DEFINE_bool(track_similar_task_usage_timeslices, false, "Should use similar "
             "task timeslices to decay resource reservations");
 
+DEFINE_bool(use_best_timeslice_prediction, false, "Whether to just pick the "
+           "most accurate prediction, instead of weighting them together.");
+
 DEFINE_int64(tracked_usage_fixed_timeslices, -1, "How many timeslices to "
              "assign each task, if you want this to be fixed.");
 
+DEFINE_double(accuracy_rating_dropoff, 0.35, "Dropoff affecting how much "
+              "additional error decreases estimate accuracy rating.");
+
 DEFINE_double(accuracy_averaging_coeff, 0.5, "Coefficient to exponentially "
-              "average accuracy ratings of task usage estimatse.");
+              "average accuracy ratings of task usage estimates.");
 
 DEFINE_int64(approximate_burstiness_calculation_min_window_size, -1, "The "
             "minimum window size to conside, if approximating burstiness");
@@ -1213,7 +1219,6 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
 void EventDrivenScheduler::UpdateTaskResourceReservations() {
   if (!FLAGS_enable_resource_reservation_decay) return;
 
-
   for (thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
            = task_map_->begin();
        it != task_map_->end(); it++) {
@@ -1236,7 +1241,6 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
       CHECK_NOTNULL(decay_data);
       ResourceVector* reservations = td_ptr->mutable_resource_reservations();
 
-
       if (reservations && latest_stats && latest_stats->has_resources()) {
         const ResourceVector limit = td_ptr->resource_request();
         const ResourceVector measured_usage = latest_stats->resources();
@@ -1249,7 +1253,10 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
           CHECK_NOTNULL(exec);
           exec->SendAbortMessage(td_ptr);
         } else {
-          ResourceVectorDouble last_usage_accuracy;
+          ResourceVectorDouble limit_accuracy;
+          DetermineUsageAccuracyRating(
+                measured_usage, limit, &limit_accuracy);
+
           bool usage_measured = decay_data->usage_measured;
           if (usage_measured) {
             ResourceVector previous_usage;
@@ -1259,8 +1266,15 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                 decay_data->last_usage_calculated.disk_bw());
             previous_usage.set_disk_cap(
                 decay_data->last_usage_calculated.disk_cap());
+            ResourceVectorDouble last_usage_accuracy;
             DetermineUsageAccuracyRating(
                 measured_usage, previous_usage, &last_usage_accuracy);
+            UpdateUsageAccuracyRating(
+                  measured_usage, previous_usage,
+                  decay_data->last_usage_rated,
+                  FLAGS_accuracy_averaging_coeff,
+                  &decay_data->last_usage_accuracy_ratings);
+            decay_data->last_usage_rated = true;
             DetermineCurrentTaskUsage(
                 measured_usage,
                 decay_data->last_usage_calculated,
@@ -1275,6 +1289,10 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                 measured_usage.disk_bw());
             decay_data->last_usage_calculated.set_disk_cap(
                 measured_usage.disk_cap());
+            decay_data->last_combined_usage_estimate.CopyFrom(
+                FLAGS_track_similar_task_usage_timeslices
+                    ? decay_data->last_usage_estimate
+                    : measured_usage);
             decay_data->usage_measured = true;
           }
 
@@ -1311,6 +1329,10 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
             }
 
             if (decay_data->usage_estimated) {
+              ResourceVectorDouble last_estimate_accuracy;
+              DetermineUsageAccuracyRating(
+                  measured_usage, decay_data->last_usage_estimate, &last_estimate_accuracy);
+
               UpdateUsageAccuracyRating(
                   measured_usage, decay_data->last_usage_estimate,
                   decay_data->usage_estimate_rated,
@@ -1324,13 +1346,15 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                     td_ptr, timeslice, task_scheduled_res_id,
                     &decay_data->last_usage_estimate);
 
-
             if (decay_data->usage_estimated) {
               vector<ResourceVectorDouble> weights;
               if (decay_data->usage_estimate_rated && usage_measured) {
-                  weights =
-                      {decay_data->usage_estimate_accuracy_ratings,
-                       last_usage_accuracy};
+                weights =
+                    {decay_data->usage_estimate_accuracy_ratings,
+                     decay_data->last_usage_accuracy_ratings};
+                if (FLAGS_use_best_timeslice_prediction) {
+                  ChooseBestWeights(&weights);
+                }
               } else {
                 CalculateExponentialAverageWeights(0.5, &weights);
               }
@@ -1424,6 +1448,10 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
             reservation_increments.set_disk_cap(1);
           }
 
+          ResourceVectorDouble last_combined_estimate_accuracy;
+          DetermineUsageAccuracyRating(
+              measured_usage, decay_data->last_combined_usage_estimate, &last_combined_estimate_accuracy);
+
           ResourceVector old_reservations(td_ptr->resource_reservations());
           CalculateReservationsFromUsage(next_timeslice_usage,
                                          measured_usage,
@@ -1431,6 +1459,8 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                                          reservation_increments,
                                          safety_margins,
                                          reservations);
+
+          decay_data->last_combined_usage_estimate.CopyFrom(next_timeslice_usage);
 
           VLOG(1) << "Updated resource reservations for task " << task_id
                   << " to "
@@ -1710,23 +1740,55 @@ void EventDrivenScheduler::DetermineUsageAccuracyRating(
   double diff_ram_cap =
       max(measured_usage.ram_cap(), usage_estimate.ram_cap())
        - min(measured_usage.ram_cap(), usage_estimate.ram_cap());
-  double mean_ram_cap =
-      (measured_usage.ram_cap() + usage_estimate.ram_cap()) / 2.0;
-  accuracy_ratings->set_ram_cap(mean_ram_cap / diff_ram_cap);
+  accuracy_ratings->set_ram_cap(
+      diff_ram_cap == 0
+          ? 1
+          : ScaleToLogistic(FLAGS_accuracy_rating_dropoff,
+                            measured_usage.ram_cap() / diff_ram_cap));
 
   double diff_disk_cap =
       max(measured_usage.disk_cap(), usage_estimate.disk_cap())
        - min(measured_usage.disk_cap(), usage_estimate.disk_cap());
-  double mean_disk_cap =
-      (measured_usage.disk_cap() + usage_estimate.disk_cap()) / 2.0;
-  accuracy_ratings->set_disk_cap(mean_disk_cap / diff_disk_cap);
+  accuracy_ratings->set_disk_cap(
+      diff_disk_cap == 0
+          ? 1
+          : ScaleToLogistic(FLAGS_accuracy_rating_dropoff,
+                            measured_usage.disk_cap() / diff_disk_cap));
 
   double diff_disk_bw =
       max(measured_usage.disk_bw(), usage_estimate.disk_bw())
        - min(measured_usage.disk_bw(), usage_estimate.disk_bw());
-  double mean_disk_bw =
-      (measured_usage.disk_bw() + usage_estimate.disk_bw()) / 2.0;
-  accuracy_ratings->set_disk_bw(mean_disk_bw / diff_disk_bw);
+  accuracy_ratings->set_disk_bw(
+      diff_disk_bw == 0
+          ? 1
+          : ScaleToLogistic(FLAGS_accuracy_rating_dropoff,
+                            measured_usage.disk_bw() / diff_disk_bw));
+}
+
+void EventDrivenScheduler::ChooseBestWeights(vector<ResourceVectorDouble>* weights) {
+  ResourceVectorDouble best_weight;
+  ResourceVector best_weight_indices;
+
+  for (uint64_t i = 0; i < weights->size(); ++i) {
+    if ((*weights)[i].ram_cap() > best_weight.ram_cap()) {
+      best_weight.set_ram_cap((*weights)[i].ram_cap());
+      best_weight_indices.set_ram_cap(i);
+    }
+    if ((*weights)[i].disk_bw() > best_weight.disk_bw()) {
+      best_weight.set_disk_bw((*weights)[i].disk_bw());
+      best_weight_indices.set_disk_bw(i);
+    }
+    if ((*weights)[i].disk_cap() > best_weight.disk_cap()) {
+      best_weight.set_disk_cap((*weights)[i].disk_cap());
+      best_weight_indices.set_disk_cap(i);
+    }
+  }
+
+  for (uint64_t i = 0; i < weights->size(); ++i) {
+    (*weights)[i].set_ram_cap(best_weight_indices.ram_cap() == i ? 1 : 0);
+    (*weights)[i].set_disk_bw(best_weight_indices.disk_bw() == i ? 1 : 0);
+    (*weights)[i].set_disk_cap(best_weight_indices.disk_cap() == i ? 1 : 0);
+  }
 }
 
 void EventDrivenScheduler::UpdateUsageAccuracyRating(

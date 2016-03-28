@@ -147,6 +147,7 @@ class EventDrivenScheduler : public SchedulerInterface {
   void DetermineUsageAccuracyRating(const ResourceVector& measured_usage,
                                     const ResourceVector& usage_estimate,
                                     ResourceVectorDouble* accuracy_ratings);
+  void ChooseBestWeights(vector<ResourceVectorDouble>* weights);
   void UpdateUsageAccuracyRating(const ResourceVector& measured_usage,
                                  const ResourceVector& usage_estimate,
                                  bool previously_estimated,
