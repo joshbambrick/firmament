@@ -1293,6 +1293,7 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                 FLAGS_track_similar_task_usage_timeslices
                     ? decay_data->last_usage_estimate
                     : measured_usage);
+
             decay_data->usage_measured = true;
           }
 
@@ -1345,6 +1346,7 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                 EstimateTaskResourceUsageFromSimilarTasks(
                     td_ptr, timeslice, task_scheduled_res_id,
                     &decay_data->last_usage_estimate);
+
 
             if (decay_data->usage_estimated) {
               vector<ResourceVectorDouble> weights;
@@ -1425,7 +1427,6 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                           FLAGS_minimum_safety_margin),
                       FLAGS_maximum_safety_margin));
 
-
               VLOG(1) << "Task " << task_id << " burstiness calculated as "
                       << ReservationResourceVectorToString(burstiness_coeffs)
                       << " with reservation increment "
@@ -1450,7 +1451,8 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
 
           ResourceVectorDouble last_combined_estimate_accuracy;
           DetermineUsageAccuracyRating(
-              measured_usage, decay_data->last_combined_usage_estimate, &last_combined_estimate_accuracy);
+              measured_usage, decay_data->last_combined_usage_estimate,
+              &last_combined_estimate_accuracy);
 
           ResourceVector old_reservations(td_ptr->resource_reservations());
           CalculateReservationsFromUsage(next_timeslice_usage,
