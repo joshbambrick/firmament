@@ -289,49 +289,10 @@ else
 fi
 
 
-## LXC library (for containing user tasks)
-print_subhdr "LXC LINUX CONTAINERS"
-LXC_BUILD_DIR=${EXT_DIR}/lxc-build
-LXC_INSTALL_FILE="${LXC_BUILD_DIR}/lib/pkgconfig/lxc.pc"
-if [[ ! -f ${LXC_INSTALL_FILE} ]]; then
-  LXC_DIR=lxc-git
-  mkdir -p ${LXC_BUILD_DIR}
-  get_dep_git "lxc" "https://github.com/lxc/lxc"
-  cd ${LXC_DIR}/
-  git checkout -q ${LXC_VER}
-  echo -n "Generating build infrastructure..."
-  RES1=$(./autogen.sh)
-  print_succ_or_fail ${RES1}
-  echo -n "Configuring lxc library..."
-  RES2=$(./configure --prefix=${LXC_BUILD_DIR})
-  print_succ_or_fail ${RES2}
-  echo -n "Building lxc library..."
-  RES3=$(make)
-  print_succ_or_fail ${RES3}
-  echo -n "Installing lxc library..."
-  RES4=$(make install)
-  print_succ_or_fail ${RES4}
-fi
-cd ${EXT_DIR}
-
-
-## CPP REST library (for REST APIs)
-print_subhdr "C++ REST SDK"
-CPPREST_DIR=${EXT_DIR}/casablanca-git
-CPPREST_BINARY_DIR=${CPPREST_DIR}/Release/build.release
-CPPREST_INSTALL_FILE="${CPPREST_BUILD_DIR}/lib/pkgconfig/CPPREST.pc"
-if [[ ! -f ${CPPREST_INSTALL_FILE} ]]; then
-  get_dep_git "casablanca" "https://git.codeplex.com/casablanca"
-  mkdir -p ${CPPREST_BINARY_DIR}
-  cd ${CPPREST_BINARY_DIR}/
-  echo -n "Compiling cpprest library..."
-  RES1=$(CXX=g++-4.8 cmake .. -DCMAKE_BUILD_TYPE=Release)
-  print_succ_or_fail ${RES1}
-  echo -n "Building cpprest library..."
-  RES2=$(make)
-  print_succ_or_fail ${RES2}
-fi
-cd ${EXT_DIR}
+# Docker
+print_subhdr "Docker"
+curl -fsSL https://get.docker.com/gpg | sudo apt-key add -
+curl -fsSL https://get.docker.com/ | sh
 
 # ANN K-NN library
 print_subhdr "ANN K-NN"
