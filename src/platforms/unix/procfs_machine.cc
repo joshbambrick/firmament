@@ -16,7 +16,6 @@
 #include "base/common.h"
 #include "base/units.h"
 #include "misc/string_utils.h"
-#include "misc/container_monitor_utils.h"
 
 DEFINE_string(monitor_netif, "eth0",
               "Network interface on which to monitor traffic statistics.");
