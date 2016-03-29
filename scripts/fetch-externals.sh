@@ -291,8 +291,11 @@ fi
 
 # Docker
 print_subhdr "Docker"
-curl -fsSL https://get.docker.com/gpg | sudo apt-key add -
-curl -fsSL https://get.docker.com/ | sh
+docker_version="$(docker -v | awk -F '[ ,]+' '{ print $3 }')"
+if [[ "$docker_version" == "" ]]; then
+  curl -fsSL https://get.docker.com/gpg | sudo apt-key add -
+  curl -fsSL https://get.docker.com/ | sh
+fi
 
 # ANN K-NN library
 print_subhdr "ANN K-NN"
