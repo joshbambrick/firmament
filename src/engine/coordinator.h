@@ -260,6 +260,7 @@ class Coordinator : public Node,
 #ifdef __HTTP_UI__
   void InitHTTPUI();
 #endif
+  void DetermineUnusedReservedResources(ResourceVector* freed_resources);
   void SendHeartbeatToParent(const MachinePerfStatisticsSample& stats);
 
 #ifdef __HTTP_UI__

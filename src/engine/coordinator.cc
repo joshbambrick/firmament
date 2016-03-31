@@ -20,6 +20,7 @@
 #include "base/resource_desc.pb.h"
 #include "base/resource_topology_node_desc.pb.h"
 #include "base/task_final_report.pb.h"
+#include "base/task_perf_statistics_sample.pb.h"
 #include "engine/health_monitor.h"
 #include "messages/base_message.pb.h"
 #include "messages/storage_registration_message.pb.h"
@@ -59,6 +60,10 @@ DEFINE_uint64(monitor_resource_usage_interval, 10000000,
               "Monitor resources interval in microseconds.");
 DEFINE_bool(populate_knowledge_base_from_file, false,
             "True if we should load the knowledge base from file.");
+DEFINE_bool(determine_unused_reserved_resources, false,
+            "True if we should send freed resource information to parent.");
+DEFINE_bool(log_child_unused_reserved_resources, false,
+            "True if we should output childrens' freed resource information.");
 
 namespace firmament {
 
@@ -290,6 +295,11 @@ void Coordinator::Run() {
         stats_resource_reservations->CopyFrom(*machine_reservations);
       }
 
+      if (FLAGS_determine_unused_reserved_resources) {
+        DetermineUnusedReservedResources(
+            stats.mutable_unused_reserved_resources());
+      }
+
       // Record this sample locally
       scheduler_->knowledge_base()->AddMachineSample(stats);
       if (parent_chan_ != NULL) {
@@ -303,6 +313,47 @@ void Coordinator::Run() {
   // TODO(malte): any cleanup we need to do; hand-over to another coordinator if
   // possible?
   Shutdown("dropped out of main loop");
+}
+
+void Coordinator::DetermineUnusedReservedResources(
+    ResourceVector* unused_reserved_resources) {
+  CHECK_NOTNULL(unused_reserved_resources);
+  for(auto& task_entry : *task_table_) {
+    const TaskPerfStatisticsSample* task_stats =
+        scheduler_->knowledge_base()->GetLatestStatsForTask(task_entry.first);
+    TaskDescriptor* td_ptr = task_entry.second;
+    CHECK_NOTNULL(td_ptr);
+    if (td_ptr->has_scheduled_to_resource()
+        && td_ptr->state() == TaskDescriptor::RUNNING
+        && !td_ptr->has_delegated_to()
+        && task_stats
+        && task_stats->has_resources()
+        && (td_ptr->has_resource_reservations()
+            || td_ptr->has_resource_request())) {
+      const ResourceVector& reservation =
+          td_ptr->has_resource_reservations()
+              ? td_ptr->resource_reservations()
+              : td_ptr->resource_request();
+      if (reservation.ram_cap() > task_stats->resources().ram_cap()) {
+        unused_reserved_resources->set_ram_cap(
+          unused_reserved_resources->ram_cap()
+          + reservation.ram_cap()
+          - task_stats->resources().ram_cap());
+      }
+      if (reservation.disk_bw() > task_stats->resources().disk_bw()) {
+        unused_reserved_resources->set_disk_bw(
+          unused_reserved_resources->disk_bw()
+          + reservation.disk_bw()
+          - task_stats->resources().disk_bw());
+      }
+      if (reservation.disk_cap() > task_stats->resources().disk_cap()) {
+        unused_reserved_resources->set_disk_cap(
+          unused_reserved_resources->disk_cap()
+          + reservation.disk_cap()
+          - task_stats->resources().disk_cap());
+      }
+    }
+  }
 }
 
 JobDescriptor* Coordinator::DescriptorForJob(const string& job_id) {
@@ -378,6 +429,37 @@ void Coordinator::MonitorResourceUsage() {
 
     if (!reservation_too_high) {
       reservation_exceeded_counter_ = 0;
+    }
+
+    if (FLAGS_log_child_unused_reserved_resources) {
+      ResourceVector unused_reserved_resources_sum;
+      for (auto& res_item : *associated_resources_) {
+        const ResourceDescriptor& res_desc = res_item.second->descriptor();
+        MachinePerfStatisticsSample stats;
+        if (scheduler_->knowledge_base()->GetLatestStatsForMachine(
+                ResourceIDFromString(res_desc.uuid()), &stats)) {
+          if (stats.has_unused_reserved_resources()) {
+            VLOG(1) << "Unused reserved resources on machine "
+                    << res_desc.uuid() << ": "
+                    << stats.unused_reserved_resources().ram_cap () << " / "
+                    << stats.unused_reserved_resources().disk_bw () << " / "
+                    << stats.unused_reserved_resources().disk_cap ();
+            unused_reserved_resources_sum.set_ram_cap(
+                unused_reserved_resources_sum.ram_cap()
+                + stats.unused_reserved_resources().ram_cap());
+            unused_reserved_resources_sum.set_disk_bw(
+                unused_reserved_resources_sum.disk_bw()
+                + stats.unused_reserved_resources().disk_bw());
+            unused_reserved_resources_sum.set_disk_cap(
+                unused_reserved_resources_sum.disk_cap()
+                + stats.unused_reserved_resources().disk_cap());
+          }
+        }
+      }
+      VLOG(1) << "Child unused reserved resource: "
+              << unused_reserved_resources_sum.ram_cap() << " / "
+              << unused_reserved_resources_sum.disk_bw() << " / "
+              << unused_reserved_resources_sum.disk_cap();
     }
   }
 }
