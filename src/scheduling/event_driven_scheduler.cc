@@ -209,6 +209,7 @@ vector<TaskID_t> EventDrivenScheduler::BoundTasksForResource(
 
 void EventDrivenScheduler::CheckRunningTasksHealth() {
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+
   for (auto& executor : executors_) {
     vector<TaskID_t> failed_tasks;
     if (!executor.second->CheckRunningTasksHealth(&failed_tasks)) {
@@ -1218,6 +1219,8 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
 
 void EventDrivenScheduler::UpdateTaskResourceReservations() {
   if (!FLAGS_enable_resource_reservation_decay) return;
+
+  boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
 
   for (thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
            = task_map_->begin();
