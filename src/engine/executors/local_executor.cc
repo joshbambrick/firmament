@@ -84,7 +84,7 @@ LocalExecutor::LocalExecutor(ResourceID_t resource_id,
                              const string& coordinator_uri)
     : local_resource_id_(resource_id),
       coordinator_uri_(coordinator_uri),
-      health_checker_(&task_handler_threads_, &handler_map_mutex_),
+      health_checker_(&task_handler_threads_, &handler_map_mutex_, &task_finalize_message_map_mutex_),
       topology_manager_(shared_ptr<TopologyManager>()),  // NULL
       heartbeat_interval_(1000000000ULL) {  // 1 billios nanosec = 1 sec
   VLOG(1) << "Executor for resource " << resource_id << " is up: " << *this;
@@ -97,7 +97,7 @@ LocalExecutor::LocalExecutor(ResourceID_t resource_id,
                              shared_ptr<TopologyManager> topology_mgr)
     : local_resource_id_(resource_id),
       coordinator_uri_(coordinator_uri),
-      health_checker_(&task_handler_threads_, &handler_map_mutex_),
+      health_checker_(&task_handler_threads_, &handler_map_mutex_, &task_finalize_message_map_mutex_),
       topology_manager_(topology_mgr),
       heartbeat_interval_(1000000000ULL) {  // 1 billios nanosec = 1 sec
   VLOG(1) << "Executor for resource " << resource_id << " is up: " << *this;
@@ -140,19 +140,26 @@ char* LocalExecutor::AddDebuggingToCommandLine(vector<char*>* argv) {
 }
 
 bool LocalExecutor::CheckRunningTasksHealth(vector<TaskID_t>* failed_tasks) {
-  boost::unique_lock<boost::shared_mutex> details_lock(task_finalize_message_map_mutex_);
   return health_checker_.Run(failed_tasks, &task_finalize_messages_);
 }
 
 void LocalExecutor::CleanUpCompletedTask(const TaskDescriptor& td) {
+{
   // Drop task handler thread
+cout << "clear completed: ----------------" << endl;
+
+cout << "clear completed: handler" << endl;
   boost::unique_lock<boost::shared_mutex> handler_lock(handler_map_mutex_);
+cout << "clear completed: pids" << endl;
   boost::unique_lock<boost::shared_mutex> pids_lock(pid_map_mutex_);
+cout << "clear completed: running lock" << endl;
   boost::unique_lock<boost::shared_mutex> running_lock(task_running_map_mutex_);
+cout << "clear completed: heartbeat update" << endl;
   boost::unique_lock<boost::shared_mutex> heartbeat_lock(task_heartbeat_update_map_mutex_);
+cout << "clear completed: COMPLETE" << endl;
+cout << "clear completed: ===================" << endl;
+
   task_handler_threads_.erase(td.uid());
-  // Kill container
-  ShutdownContainerIfRunning(td.uid());
   // Issue a kill to make double-sure that the task has finished
   // XXX(malte): this is a hack!
   pid_t* pid = FindOrNull(task_pids_, td.uid());
@@ -166,6 +173,10 @@ void LocalExecutor::CleanUpCompletedTask(const TaskDescriptor& td) {
   boost::unique_lock<boost::shared_mutex> container_monitor_lock(
       task_container_monitor_map_mutex_);
   task_container_monitors_.erase(td.uid());
+}
+  // Kill container
+  ShutdownContainerIfRunning(td.uid());
+
   ClearCompletedTaskFinalizeMessages(td.uid(), true);
 }
 
@@ -288,7 +299,9 @@ void LocalExecutor::SendAbortMessage(TaskDescriptor* td) {
 }
 
 void LocalExecutor::SendFailedMessage(TaskDescriptor* td) {
+cout << "send failed message" << endl;
   SetFinalizeMessage(td->uid(), TaskDescriptor::FAILED);
+cout << "sent failed message" << endl;
 }
 
 void LocalExecutor::HandleTaskFailure(TaskDescriptor* td) {
@@ -431,12 +444,18 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
 
   string container_name = GetTaskContainerName(task_id);
   {
+
+    cout << "start task: -----------------" << endl;
+    cout << "get task_container_names_map_mutex_" << endl;
     boost::unique_lock<boost::shared_mutex> containers_lock(task_container_names_map_mutex_);
     CHECK(InsertIfNotPresent(&task_container_names_, task_id, container_name));
+    cout << "get task_running_map_mutex_" << endl;
     boost::unique_lock<boost::shared_mutex> running_lock(task_running_map_mutex_);
     CHECK(InsertIfNotPresent(&task_running_, task_id, true));
+    cout << "get task_container_monitor_map_mutex_" << endl;
     boost::unique_lock<boost::shared_mutex> container_monitor_lock(
         task_container_monitor_map_mutex_);
+    cout << "start task: ===========" << endl;
     string fs_dir = FLAGS_rootfs_base_dir + container_name + "/";
     string monitor_host = (FLAGS_container_monitor_host != "")
         ? FLAGS_container_monitor_host
@@ -506,7 +525,10 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
         VLOG(3) << "Waiting for child process " << pid << " to exit...";
       }
       {
+cout << "task running map mutex" << endl;
         boost::unique_lock<boost::shared_mutex> running_lock(task_running_map_mutex_);
+cout << "task running map mutex 2" << endl;
+
         // Update value (if not already erased)
         if (FindOrNull(task_running_, task_id)) {
           CHECK(!InsertOrUpdate(&task_running_, task_id, false));
@@ -517,6 +539,7 @@ int32_t LocalExecutor::RunProcessSync(TaskID_t task_id,
         VLOG(1) << "Task process with PID " << pid << " exited with status "
                 << WEXITSTATUS(status);
         if (status == 0) {
+cout << "set completed: " << task_id << endl;
           SetFinalizeMessage(task_id, TaskDescriptor::COMPLETED);
         }
       } else if (WIFSIGNALED(status)) {
@@ -580,6 +603,9 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
                      CreateMountConfigEntry(full_data_dir).c_str());
   c->set_config_item(c, "lxc.mount.entry",
                      CreateMountConfigEntry(full_extra_dir).c_str());
+  c->set_config_item(c, "lxc.logfile", "/home/jpb80/lxc-log0.log");
+  c->set_config_item(c, "lxc.logpriority", "TRACE");
+  c->set_config_item(c, "lxc.console.logfile", "/home/jpb80/lxc-log1.log");
 
   c->start(c, 0, NULL);
 
@@ -592,8 +618,13 @@ int LocalExecutor::ExecuteBinaryInContainer(TaskID_t task_id,
   LOG(INFO) << "Executing binary of task " << task_id;
   int res = -1;
   res = c->attach_run_wait(c, &attach_options, argv[0], &argv[0]);
-
+  LOG(INFO) << "Finished executing binary of task " << task_id;
+  cout << "Finished executing binary of task " << task_id << endl;
   ShutdownContainerIfRunning(task_id);
+
+  LOG(INFO) << "Response from binary of task " << task_id << ": " << res;
+  cout << "Response from binary of task " << task_id << ": " << res << endl;
+
 
   return res == -1 ? 100 : res;
 }
@@ -603,26 +634,33 @@ string LocalExecutor::CreateMountConfigEntry(string dir) {
 }
 
 void LocalExecutor::CreateTaskHeartbeats(vector<TaskHeartbeatMessage>* heartbeats) {
+  cout << "create heartbeat: ---------------" << endl;
   boost::shared_lock<boost::shared_mutex> handler_lock(handler_map_mutex_);
+  cout << "create heartbeat: got handler_map_mutex_" << endl;
   boost::unique_lock<boost::shared_mutex> messages_lock(task_finalize_message_map_mutex_);
+  cout << "create heartbeat: got task_finalize_message_map_mutex_" << endl;
+  boost::unique_lock<boost::shared_mutex> container_names_lock(task_container_names_map_mutex_);
+  cout << "create heartbeat: got task_container_names_map_mutex_" << endl;
   boost::unique_lock<boost::shared_mutex> running_lock(task_running_map_mutex_);
+  cout << "create heartbeat: got task_running_map_mutex_" << endl;
+  boost::unique_lock<boost::shared_mutex> heartbeat_lock(task_heartbeat_update_map_mutex_);
+  cout << "create heartbeat: got task_heartbeat_update_map_mutex_" << endl;
+  cout << "create heartbeat: ===============" << endl;
 
   for (unordered_map<TaskID_t, boost::thread*>::const_iterator
-       it = task_handler_threads_.begin();
-       it != task_handler_threads_.end();
-       ++it) {
-      bool* state_message_sent = FindOrNull(task_finalize_messages_sent_, it->first);
-      bool* task_running = FindOrNull(task_running_, it->first);
+     it = task_handler_threads_.begin();
+     it != task_handler_threads_.end();
+     ++it) {
+    bool* state_message_sent = FindOrNull(task_finalize_messages_sent_, it->first);
+    bool* task_running = FindOrNull(task_running_, it->first);
 
-      if (task_running && *task_running && (!state_message_sent || !*state_message_sent)) {
-        heartbeats->push_back(CreateTaskHeartbeat(it->first));
-      }
+    if (task_running && *task_running && (!state_message_sent || !*state_message_sent)) {
+      heartbeats->push_back(CreateTaskHeartbeat(it->first));
+    }
   }
 }
 
 TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
-  boost::unique_lock<boost::shared_mutex> heartbeat_lock(task_heartbeat_update_map_mutex_);
-  boost::unique_lock<boost::shared_mutex> container_names_lock(task_container_names_map_mutex_);
   uint64_t* heartbeat_sequence_number_ptr =
       FindOrNull(task_heartbeat_sequence_numbers_, task_id);
   string* container_name = FindOrNull(task_container_names_, task_id);
@@ -639,8 +677,11 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
     bool usage_read = false;
 
     {
+cout << "get container monitor lock" << endl;
       boost::unique_lock<boost::shared_mutex> container_monitor_lock(
               task_container_monitor_map_mutex_);
+cout << "got container monitor lock" << endl;
+
       shared_ptr<ContainerMonitor>* task_container_monitor =
           FindOrNull(task_container_monitors_, task_id);
       CHECK_NOTNULL(task_container_monitor);
@@ -669,8 +710,13 @@ TaskHeartbeatMessage LocalExecutor::CreateTaskHeartbeat(TaskID_t task_id) {
 void LocalExecutor::CreateTaskStateChanges(vector<TaskStateMessage>* state_messages) {
   set<TaskID_t> sent_tasks;
   {
+cout << "get handler map 2" << endl;
+
     boost::shared_lock<boost::shared_mutex> handler_lock(handler_map_mutex_);
+cout << "get finalize 2 " << endl;
     boost::unique_lock<boost::shared_mutex> messages_lock(task_finalize_message_map_mutex_);
+cout << "create staet changes mutexes gotten" << endl;
+
 
     for (unordered_map<TaskID_t, TaskStateMessage>::const_iterator
          it = task_finalize_messages_.begin();
@@ -695,35 +741,60 @@ void LocalExecutor::CreateTaskStateChanges(vector<TaskStateMessage>* state_messa
 
 void LocalExecutor::SetFinalizeMessage(TaskID_t task_id,
                                        TaskDescriptor::TaskState new_state) {
+cout << "set finalize 1" << endl;
+cout << "set finalize get " << endl;
+cout << "set finalize 2" << endl;
+
   boost::unique_lock<boost::shared_mutex>messages_lock(
       task_finalize_message_map_mutex_);
+cout << "set finalize 3" << endl;
+cout << "gotten set finalize mutex" << endl;
+
   TaskStateMessage* current_message = FindOrNull(
       task_finalize_messages_, task_id);
+cout << "set finalize 4" << endl;
   if (!current_message) {
+cout << "set finalize 5" << endl;
     TaskStateMessage finalize_message;
     finalize_message.set_id(task_id);
     finalize_message.set_new_state(new_state);
     CHECK(InsertIfNotPresent(&task_finalize_messages_, task_id,
                              finalize_message));
   }
+cout << "set finalize 6" << endl;
+
 }
 
 
-void LocalExecutor::ShutdownContainerIfRunning(TaskID_t task_id) {
-  boost::unique_lock<boost::shared_mutex> containers_lock(task_container_names_map_mutex_);
-  string* container_name = FindOrNull(task_container_names_, task_id);
-  if (container_name) {
-    task_container_names_.erase(task_id);
-    lxc_container *container = lxc_container_new(container_name->c_str(), NULL);
-    if (container->is_running(container)) {
-      if (!container->shutdown(container, 30)) {
-        container->stop(container);
-      }
 
-      container->destroy(container);
+void LocalExecutor::ShutdownContainerSync(const string& container_name) {
+  lxc_container *container = lxc_container_new(container_name.c_str(), NULL);
+  if (container->is_running(container)) {
+    if (!container->shutdown(container, 30)) {
+      container->stop(container);
     }
 
-    lxc_container_put(container);
+    container->destroy(container);
+  }
+
+  lxc_container_put(container);
+}
+
+void LocalExecutor::ShutdownContainerIfRunning(TaskID_t task_id) {
+  string container_name_cpy = "";
+  {
+    cout << "SHUTDOWN: get container name lock" << endl;
+    boost::unique_lock<boost::shared_mutex> containers_lock(task_container_names_map_mutex_);
+    cout << "SHUTDOWN: got container name lock" << endl;
+    string* container_name = FindOrNull(task_container_names_, task_id);
+    if (container_name) {
+      container_name_cpy = *container_name;
+      task_container_names_.erase(task_id);
+    }
+  }
+  if (container_name_cpy != "") {
+    boost::thread async_update_thread(
+        boost::bind(&LocalExecutor::ShutdownContainerSync, this, container_name_cpy));
   }
 }
 

@@ -17,43 +17,68 @@ namespace firmament {
 
 TaskHealthChecker::TaskHealthChecker(
     const unordered_map<TaskID_t, boost::thread*>* handler_thread_map,
-    boost::shared_mutex* handler_map_lock)
+    boost::shared_mutex* handler_map_lock,
+    boost::shared_mutex* finalize_map_lock)
   : handler_thread_map_(handler_thread_map),
-    handler_map_lock_(handler_map_lock) {
+    handler_map_lock_(handler_map_lock),
+    finalize_map_lock_(finalize_map_lock) {
 }
 
 bool TaskHealthChecker::Run(vector<TaskID_t>* failed_tasks,
     const unordered_map<TaskID_t, TaskStateMessage>* task_finalize_messages) {
   bool all_good = true;
+cout << "GET MAP LOCK" << endl;
   boost::shared_lock<boost::shared_mutex> map_lock(*handler_map_lock_);
+cout << "GET FINALIZE LOCK" << endl;
+  boost::shared_lock<boost::shared_mutex> finalize_map_lock(*finalize_map_lock_);
+cout << "GOT ALL LOCKS" << endl;
   for (unordered_map<TaskID_t, boost::thread*>::const_iterator
        it = handler_thread_map_->begin();
        it != handler_thread_map_->end();
        ++it) {
     VLOG(2) << "Checking liveness of task " << it->first;
+
+cout << "started checking task " << it->first << endl;
+
     if (!CheckTaskLiveness(it->first, it->second)
                     && !CheckTaskCompleted(it->first, task_finalize_messages)) {
       all_good = false;
+cout << "task " << it->first << "has failed" << endl;
       LOG(ERROR) << "Task " << it->first << " has failed!";
       failed_tasks->push_back(it->first);
     }
+
+cout << "stopped checking task " << it->first << endl;
   }
   return all_good;
 }
 
 bool TaskHealthChecker::CheckTaskLiveness(TaskID_t task_id,
                                           boost::thread* handler_thread) {
+ cout << "liveness 1" << endl;
+
   if (!handler_thread)
     return false;
+ cout << "liveness 2" << endl;
+
 #if BOOST_VERSION <= 104800
-  if (handler_thread->timed_join(boost::posix_time::seconds(1)))
+  if (handler_thread->timed_join(boost::posix_time::milliseconds(100)))
     return false;
+ cout << "liveness 3" << endl;
+
 #else
-  if (handler_thread->try_join_for(boost::chrono::seconds(1)))
+  if (handler_thread->try_join_for(boost::chrono::milliseconds(100)))
     return false;
+ cout << "liveness 4" << endl;
+
 #endif
+ cout << "liveness 5" << endl;
+
   if (!handler_thread->joinable())
     return false;
+
+ cout << "liveness 6" << endl;
+
 
   return true;
 }
@@ -61,6 +86,7 @@ bool TaskHealthChecker::CheckTaskLiveness(TaskID_t task_id,
 bool TaskHealthChecker::CheckTaskCompleted(TaskID_t task_id,
   const unordered_map<TaskID_t, TaskStateMessage>* task_finalize_messages) {
   const TaskStateMessage* message = FindOrNull(*task_finalize_messages, task_id);
+cout <<  "message: " << message << endl;
   return message;
 }
 

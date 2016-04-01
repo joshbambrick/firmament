@@ -175,7 +175,10 @@ EventDrivenScheduler::~EventDrivenScheduler() {
 }
 
 void EventDrivenScheduler::AddJob(JobDescriptor* jd_ptr) {
+ cout << "get scheduling lock 1" << endl;
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+ cout << "got scheduling lock 1" << endl;
+
   InsertOrUpdate(&jobs_to_schedule_, JobIDFromString(jd_ptr->uuid()), jd_ptr);
 }
 
@@ -208,27 +211,44 @@ vector<TaskID_t> EventDrivenScheduler::BoundTasksForResource(
 }
 
 void EventDrivenScheduler::CheckRunningTasksHealth() {
+ cout << "get scheduling lock 2" << endl;
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+ cout << "got scheduling lock 1" << endl;
+cout << "fail 1" << endl;
+
   for (auto& executor : executors_) {
+cout << "fail 2" << endl;
     vector<TaskID_t> failed_tasks;
+cout << "fail 3" << endl;
     if (!executor.second->CheckRunningTasksHealth(&failed_tasks)) {
+cout << "fail 4" << endl;
       // Handle task failures
       for (auto& failed_task : failed_tasks) {
+cout << "fail 5" << endl;
         TaskDescriptor* td_ptr = FindPtrOrNull(*task_map_, failed_task);
+cout << "fail 6" << endl;
         CHECK_NOTNULL(td_ptr);
+cout << "fail 7" << endl;
         if (td_ptr->state() != TaskDescriptor::COMPLETED &&
             td_ptr->last_heartbeat_time() <=
             (GetCurrentTimestamp() - FLAGS_task_fail_timeout *
              SECONDS_TO_MICROSECONDS)) {
+cout << "fail 8" << endl;
           LOG(INFO) << "Task " << td_ptr->uid() << " has not reported "
                     << "heartbeats for " << FLAGS_task_fail_timeout
                     << "s and its handler thread has exited. "
                     << "Declaring it FAILED!";
+cout << "fail 9" << endl;
           executor.second->SendFailedMessage(td_ptr);
+cout << "fail 10" << endl;
         }
+cout << "fail 11" << endl;
       }
+cout << "fail 12" << endl;
     }
+cout << "fail 13" << endl;
   }
+cout << "fail 14" << endl;
 }
 
 void EventDrivenScheduler::ClearScheduledJobs() {
@@ -360,7 +380,11 @@ void EventDrivenScheduler::HandleReferenceStateChange(
     // no change, return
     return;
   } else if (!old_ref.Consumable() && new_ref.Consumable()) {
+ cout << "get scheduling lock 4" << endl;
+
     boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+ cout << "got scheduling lock 4" << endl;
+
     // something became available, unblock the waiting tasks
     set<TaskDescriptor*>* tasks = FindOrNull(reference_subscriptions_,
                                              old_ref.id());
@@ -398,7 +422,13 @@ void EventDrivenScheduler::HandleReferenceStateChange(
 
 void EventDrivenScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
                                                 TaskFinalReport* report) {
+
+  cout << "task completion: " << td_ptr->uid() << endl;
+ cout << "get scheduling lock 5" << endl;
+
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+ cout << "got scheduling lock 5" << endl;
+
   ClearTaskResourceReservations(td_ptr->uid());
   // Find resource for task
   ResourceID_t* res_id_ptr = BoundResourceForTask(td_ptr->uid());
@@ -523,7 +553,11 @@ void EventDrivenScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
 }
 
 void EventDrivenScheduler::HandleTaskAbortion(TaskDescriptor* td_ptr) {
+ cout << "get scheduling lock 6" << endl;
+
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+ cout << "got scheduling lock 6" << endl;
+
   // Find resource for task
   ResourceID_t* res_id_ptr = BoundResourceForTask(td_ptr->uid());
   CHECK_NOTNULL(res_id_ptr);
@@ -540,8 +574,11 @@ void EventDrivenScheduler::HandleTaskAbortion(TaskDescriptor* td_ptr) {
 
 void EventDrivenScheduler::HandleTaskDelegationFailure(
     TaskDescriptor* td_ptr) {
-  {
+  { cout << "get scheduling lock 8" << endl;
+
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+ cout << "got scheduling lock 8" << endl;
+
   // Find the resource where the task was supposed to be delegated
   ResourceID_t* res_id_ptr = BoundResourceForTask(td_ptr->uid());
   CHECK_NOTNULL(res_id_ptr);
@@ -554,7 +591,11 @@ void EventDrivenScheduler::HandleTaskDelegationFailure(
 
 void EventDrivenScheduler::HandleTaskEviction(TaskDescriptor* td_ptr,
                                               ResourceDescriptor* rd_ptr) {
+ cout << "get scheduling lock 9" << endl;
+
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+ cout << "got scheduling lock 9" << endl;
+
   ClearTaskResourceReservations(td_ptr->uid());
   ResourceID_t res_id = ResourceIDFromString(rd_ptr->uuid());
   VLOG(1) << "Handling completion of task " << td_ptr->uid()
@@ -574,7 +615,10 @@ void EventDrivenScheduler::HandleTaskEviction(TaskDescriptor* td_ptr,
 }
 
 void EventDrivenScheduler::HandleTaskFailure(TaskDescriptor* td_ptr) {
+ cout << "get scheduling lock 10" << endl;
+
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+ cout << "got scheduling lock 10" << endl;
   ClearTaskResourceReservations(td_ptr->uid());
   // Find resource for task
   ResourceID_t* res_id_ptr = FindOrNull(task_bindings_, td_ptr->uid());
@@ -698,7 +742,10 @@ void EventDrivenScheduler::KillRunningTask(
 
 void EventDrivenScheduler::RescheduleTask(
     TaskDescriptor* td_ptr) {
+ cout << "get scheduling lock 11" << endl;
+
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+ cout << "got scheduling lock 11" << endl;
   // Go back to try scheduling this task again
   td_ptr->set_state(TaskDescriptor::RUNNABLE);
   runnable_tasks_.insert(td_ptr->uid());
@@ -861,7 +908,10 @@ bool EventDrivenScheduler::PlaceDelegatedTask(TaskDescriptor* td,
     return false;
   }
   // Otherwise, bind the task
+ cout << "get scheduling lock 12" << endl;
+
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+ cout << "got scheduling lock 12" << endl;
   runnable_tasks_.insert(td->uid());
   InsertIfNotPresent(task_map_.get(), td->uid(), td);
   HandleTaskPlacement(td, rd);
@@ -932,7 +982,9 @@ void EventDrivenScheduler::RegisterLocalResource(ResourceID_t res_id) {
 void EventDrivenScheduler::RegisterResource(ResourceID_t res_id,
                                             bool local,
                                             bool simulated) {
+ cout << "get scheduling lock 13" << endl;
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+ cout << "got scheduling lock 13" << endl;
   if (local) {
     RegisterLocalResource(res_id);
   } else if (simulated) {
@@ -1218,6 +1270,10 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
 
 void EventDrivenScheduler::UpdateTaskResourceReservations() {
   if (!FLAGS_enable_resource_reservation_decay) return;
+cout << "get update reservation scheduling lock" << endl;
+  boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+cout << "gotten update reservation scheudling lock " << endl;
+
 
   for (thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
            = task_map_->begin();
@@ -1917,7 +1973,9 @@ ResourceID_t EventDrivenScheduler::MachineResIDForResource(
 }
 
 vector<TaskHeartbeatMessage> EventDrivenScheduler::CreateTaskHeartbeats() {
+cout << "get heartbeats scheduling lock" << endl;
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+cout << "gotten heartbeats shceudling lock " << endl;
   vector<TaskHeartbeatMessage> task_heartbeats;
   for (auto& executor : executors_) {
     executor.second->CreateTaskHeartbeats(&task_heartbeats);
@@ -1927,7 +1985,9 @@ vector<TaskHeartbeatMessage> EventDrivenScheduler::CreateTaskHeartbeats() {
 }
 
 vector<TaskStateMessage> EventDrivenScheduler::CreateTaskStateChanges() {
+cout << "get state change scheduling" << endl;
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+cout << "gotten state chang scheduling" << endl;
   vector<TaskStateMessage> task_state_changes;
   for (auto& executor : executors_) {
     executor.second->CreateTaskStateChanges(&task_state_changes);
