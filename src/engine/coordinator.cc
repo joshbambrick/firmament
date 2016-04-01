@@ -64,6 +64,9 @@ DEFINE_bool(determine_unused_reserved_resources, false,
             "True if we should send freed resource information to parent.");
 DEFINE_bool(log_child_unused_reserved_resources, false,
             "True if we should output childrens' freed resource information.");
+DEFINE_bool(preempt_by_start_time, true,
+            "True if we should sort pre-empted tasks by start time first.");
+
 
 namespace firmament {
 
@@ -400,9 +403,9 @@ void Coordinator::MonitorResourceUsage() {
     if (machine_reservations) {
       ResourceVector reservations_to_free;
 
-      if (machine_reservations->ram_cap() > machine_capacity_.ram_cap()) {
+      if (machine_reservations->ram_cap() > 9000) {
         reservations_to_free.set_ram_cap(
-            machine_reservations->ram_cap() - machine_capacity_.ram_cap());
+            machine_reservations->ram_cap() - 9000);
         reservation_too_high = true;
       }
 
@@ -420,7 +423,10 @@ void Coordinator::MonitorResourceUsage() {
 
       if (reservation_too_high) {
         reservation_exceeded_counter_++;
+        LOG(INFO) << "Machine reservation too high count: "
+                  << reservation_exceeded_counter_;
         if (reservation_exceeded_counter_ == FLAGS_overreserved_wait_period) {
+          LOG(INFO) << "Machine reservation too high count, freeing resources";
           FreeResources(reservations_to_free);
           reservation_too_high = false;
         }
@@ -468,6 +474,11 @@ void Coordinator::FreeResources(ResourceVector resources_to_free) {
   auto comp = [&resources_to_free](TaskDescriptor* a, TaskDescriptor* b) {
     if (a->priority() != b->priority())
       return a->priority() > b->priority() ? true : false;
+
+    if (a->has_start_time() && b->has_start_time() && FLAGS_preempt_by_start_time) {
+      return a->start_time() < b->start_time() ? true : false;
+    }
+
     if (!a->has_resource_reservations() || !b->has_resource_reservations()) {
       return !a->has_resource_reservations() ? true : false;
     }
@@ -534,10 +545,17 @@ void Coordinator::FreeResources(ResourceVector resources_to_free) {
     resource_freed.set_disk_cap(
         resource_freed.disk_cap()
         + lowest_task_desc->resource_reservations().disk_cap());
+
+    LOG(INFO) << "Freeing resources by aborting task: "
+              << lowest_task_desc->uid();
+    killed_tasks_to_reschedule_->insert(lowest_task_desc);
+
+    delay_task_state_change_.insert(lowest_task_desc->uid());
     scheduler_->KillRunningTask(lowest_task_desc->uid(),
                                 TaskKillMessage::RESOURCE_EXCEEDED);
+    delay_task_state_change_.erase(lowest_task_desc->uid());
+
     machine_running_task_descs.pop();
-    killed_tasks_to_reschedule_->insert(lowest_task_desc);
   }
 }
 
@@ -547,13 +565,29 @@ void Coordinator::PullTaskMessages() {
     uint64_t cur_time = GetCurrentTimestamp();
     if (cur_time - last_pull_time > FLAGS_heartbeat_interval) {
       VLOG(1) << "Pulling messages from tasks";
-
       vector<TaskStateMessage> states = scheduler_->CreateTaskStateChanges();
       for (vector<TaskStateMessage>::iterator it = states.begin();
            it != states.end();
            ++it) {
-        HandleTaskStateChange(*it);
+        if (delay_task_state_change_.find(it->id())
+            == delay_task_state_change_.end()) {
+          HandleTaskStateChange(*it);
+        } else {
+          delayed_state_changes_.push_back(*it);
+        }
       }
+
+      deque<TaskStateMessage> keep_state_changes;
+      for (auto& state_change : delayed_state_changes_) {
+        if (delay_task_state_change_.find(state_change.id())
+            == delay_task_state_change_.end()) {
+          HandleTaskStateChange(state_change);
+        } else {
+          keep_state_changes.push_back(state_change);
+        }
+      }
+
+      delayed_state_changes_ = keep_state_changes;
 
       vector<TaskHeartbeatMessage> heartbeats =
           scheduler_->CreateTaskHeartbeats();
@@ -965,6 +999,7 @@ void Coordinator::HandleTaskStateChange(
   LOG(INFO) << "Task " << msg.id() << " now in state "
             << ENUM_TO_STRING(TaskDescriptor::TaskState, msg.new_state())
             << ".";
+
   TaskDescriptor* td_ptr = FindPtrOrNull(*task_table_, msg.id());
   CHECK(td_ptr) << "Received task state change message for task "
                 << msg.id();
@@ -1020,6 +1055,7 @@ void Coordinator::HandleTaskStateChange(
 void Coordinator::HandleTaskCompletion(const TaskStateMessage& msg,
                                        TaskDescriptor* td_ptr) {
   bool reschedule_task = false;
+
   if (killed_tasks_to_reschedule_->find(td_ptr)
       != killed_tasks_to_reschedule_->end()) {
     killed_tasks_to_reschedule_->erase(td_ptr);
@@ -1060,7 +1096,6 @@ void Coordinator::HandleTaskCompletion(const TaskStateMessage& msg,
     TaskFinalReport *sending_rep = bm.mutable_task_state()->mutable_report();
     sending_rep->CopyFrom(report);
     sending_rep->set_task_id(td_ptr->uid());
-
     m_adapter_->SendMessageToEndpoint(td_ptr->delegated_from(), bm);
   } else {
     // Check if this is the last task in the job to complete; if so, the job

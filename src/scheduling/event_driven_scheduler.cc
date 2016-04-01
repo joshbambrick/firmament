@@ -209,6 +209,7 @@ vector<TaskID_t> EventDrivenScheduler::BoundTasksForResource(
 
 void EventDrivenScheduler::CheckRunningTasksHealth() {
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+
   for (auto& executor : executors_) {
     vector<TaskID_t> failed_tasks;
     if (!executor.second->CheckRunningTasksHealth(&failed_tasks)) {
@@ -398,7 +399,10 @@ void EventDrivenScheduler::HandleReferenceStateChange(
 
 void EventDrivenScheduler::HandleTaskCompletion(TaskDescriptor* td_ptr,
                                                 TaskFinalReport* report) {
+
+
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+
   ClearTaskResourceReservations(td_ptr->uid());
   // Find resource for task
   ResourceID_t* res_id_ptr = BoundResourceForTask(td_ptr->uid());
@@ -540,8 +544,8 @@ void EventDrivenScheduler::HandleTaskAbortion(TaskDescriptor* td_ptr) {
 
 void EventDrivenScheduler::HandleTaskDelegationFailure(
     TaskDescriptor* td_ptr) {
-  {
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+
   // Find the resource where the task was supposed to be delegated
   ResourceID_t* res_id_ptr = BoundResourceForTask(td_ptr->uid());
   CHECK_NOTNULL(res_id_ptr);
@@ -1218,6 +1222,8 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
 
 void EventDrivenScheduler::UpdateTaskResourceReservations() {
   if (!FLAGS_enable_resource_reservation_decay) return;
+
+  boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
 
   for (thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
            = task_map_->begin();

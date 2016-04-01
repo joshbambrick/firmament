@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 #include <queue>
+#include <deque>
 
 // XXX(malte): Think about the Boost dependency!
 #ifdef __PLATFORM_HAS_BOOST__
@@ -284,6 +285,8 @@ class Coordinator : public Node,
   shared_ptr<TaskMap_t> task_table_;
   // A set of the tasks to reschedule, once they complete.
   shared_ptr<set<TaskDescriptor*>> killed_tasks_to_reschedule_;
+  set<TaskID_t> delay_task_state_change_;
+  deque<TaskStateMessage> delayed_state_changes_;
   // The health monitor periodically checks on the liveness of subordinate
   // coordinators and running tasks.
   HealthMonitor health_monitor_;

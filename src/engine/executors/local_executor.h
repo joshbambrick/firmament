@@ -108,6 +108,7 @@ class LocalExecutor : public ExecutorInterface {
                                vector<char*> argv,
                                ResourceVector resource_reservations,
                                string container_name);
+  void ShutdownContainerSync(const string& container_name);
   void ShutdownContainerIfRunning(TaskID_t task_id);
   TaskHeartbeatMessage CreateTaskHeartbeat(TaskID_t task_id);
   void SetFinalizeMessage(TaskID_t task_id,
