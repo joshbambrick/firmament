@@ -1219,6 +1219,8 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
 void EventDrivenScheduler::UpdateTaskResourceReservations() {
   if (!FLAGS_enable_resource_reservation_decay) return;
 
+  boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+
   for (thread_safe::map<TaskID_t, TaskDescriptor*>::iterator it
            = task_map_->begin();
        it != task_map_->end(); it++) {
