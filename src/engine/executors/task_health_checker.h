@@ -30,7 +30,8 @@ class TaskHealthChecker {
  public:
   TaskHealthChecker(
       const unordered_map<TaskID_t, boost::thread*>* handler_thread_map,
-      boost::shared_mutex* handler_map_lock);
+      boost::shared_mutex* handler_map_lock,
+      boost::shared_mutex* finalize_map_lock);
   bool Run(vector<TaskID_t>* failed_tasks,
 	    const unordered_map<TaskID_t, TaskStateMessage>* task_finalize_messages);
 
@@ -42,6 +43,7 @@ class TaskHealthChecker {
 
   const unordered_map<TaskID_t, boost::thread*>* handler_thread_map_;
   boost::shared_mutex* handler_map_lock_;
+  boost::shared_mutex* finalize_map_lock_;
 };
 
 }  // namespace firmament
