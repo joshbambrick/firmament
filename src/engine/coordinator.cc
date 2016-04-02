@@ -54,8 +54,8 @@ DEFINE_int32(http_ui_port, 8080,
         "The port that the HTTP UI will be served on; -1 to disable.");
 #endif
 DECLARE_uint64(heartbeat_interval);
-DEFINE_uint64(overreserved_wait_period, 10, "How many checks that find "
-              "reservations exceed capacity before tasks are pre-empted.");
+DEFINE_int64(overreserved_wait_period, 10, "How many checks that find "
+             "reservations exceed capacity before tasks are pre-empted.");
 DEFINE_uint64(monitor_resource_usage_interval, 10000000,
               "Monitor resources interval in microseconds.");
 DEFINE_bool(populate_knowledge_base_from_file, false,
@@ -425,9 +425,12 @@ void Coordinator::MonitorResourceUsage() {
         reservation_exceeded_counter_++;
         LOG(INFO) << "Machine reservation too high count: "
                   << reservation_exceeded_counter_;
-        if (reservation_exceeded_counter_ == FLAGS_overreserved_wait_period) {
+        uint64_t wait_period = FLAGS_overreserved_wait_period;
+        if (reservation_exceeded_counter_ == wait_period) {
           LOG(INFO) << "Machine reservation too high count, freeing resources";
           FreeResources(reservations_to_free);
+          reservation_too_high = false;
+        } else if (FLAGS_overreserved_wait_period == -1) {
           reservation_too_high = false;
         }
       }

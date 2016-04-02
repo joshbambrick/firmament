@@ -58,6 +58,8 @@ DEFINE_uint64(debug_interactively, 0,
               "Run this task ID inside an interactive debugger.");
 DEFINE_bool(perf_monitoring, false,
             "Enable performance monitoring for tasks executed.");
+DEFINE_bool(destroy_task_containers, false,
+            "Enable task container destruction when finished.");
 DEFINE_string(task_lib_dir, "build/engine/",
               "Path where task_lib.a and task_lib_inject.so are.");
 DEFINE_string(task_log_dir, "/tmp/firmament-log",
@@ -723,8 +725,9 @@ void LocalExecutor::ShutdownContainerSync(const string& container_name) {
     if (!container->shutdown(container, 30)) {
       container->stop(container);
     }
-
-    container->destroy(container);
+    if (FLAGS_destroy_task_containers) {
+      container->destroy(container);
+    }
   }
 
   lxc_container_put(container);
@@ -825,7 +828,7 @@ void LocalExecutor::ReadFromPipe(int fd) {
 }
 
 string LocalExecutor::GetTaskContainerName(TaskID_t task_id) {
-  return "task" + to_string(task_id);
+  return "task" + to_string(task_id) + to_string(GetCurrentTimestamp());
 }
 
 }  // namespace executor
