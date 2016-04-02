@@ -66,6 +66,8 @@ DEFINE_bool(log_child_unused_reserved_resources, false,
             "True if we should output childrens' freed resource information.");
 DEFINE_bool(preempt_by_start_time, true,
             "True if we should sort pre-empted tasks by start time first.");
+DEFINE_bool(reschedule_preempted_tasks, true,
+            "True if we should reschedule tasks that have been pre-empted.");
 
 
 namespace firmament {
@@ -211,11 +213,9 @@ void Coordinator::AddResource(ResourceTopologyNodeDescriptor* rtnd,
     ResourceVector* cap = resource_desc->mutable_resource_capacity();
     machine_monitor_.GetMachineCapacity(cap);
     machine_capacity_ = *cap;
-    if (FLAGS_enable_resource_reservation_decay) {
-      ResourceVector machine_reservations;
-      scheduler_->knowledge_base()->UpdateMachineReservations(
-          machine_uuid_, machine_reservations);
-    }
+    ResourceVector machine_reservations;
+    scheduler_->knowledge_base()->UpdateMachineReservations(
+        machine_uuid_, machine_reservations);
   }
   // Register with scheduler if this resource is schedulable
   if (resource_desc->type() == ResourceDescriptor::RESOURCE_PU) {
@@ -551,12 +551,16 @@ void Coordinator::FreeResources(ResourceVector resources_to_free) {
 
     LOG(INFO) << "Freeing resources by aborting task: "
               << lowest_task_desc->uid();
-    killed_tasks_to_reschedule_->insert(lowest_task_desc);
+    if (FLAGS_reschedule_preempted_tasks) {
+      killed_tasks_to_reschedule_->insert(lowest_task_desc);
 
-    delay_task_state_change_.insert(lowest_task_desc->uid());
+      delay_task_state_change_.insert(lowest_task_desc->uid());
+    }
     scheduler_->KillRunningTask(lowest_task_desc->uid(),
                                 TaskKillMessage::RESOURCE_EXCEEDED);
-    delay_task_state_change_.erase(lowest_task_desc->uid());
+    if (FLAGS_reschedule_preempted_tasks) {
+      delay_task_state_change_.erase(lowest_task_desc->uid());
+    }
 
     machine_running_task_descs.pop();
   }
@@ -748,8 +752,7 @@ void Coordinator::HandleHeartbeat(const HeartbeatMessage& msg) {
       rsp->set_last_heartbeat(GetCurrentTimestamp());
       // Record resource statistics sample
       scheduler_->knowledge_base()->AddMachineSample(msg.load());
-      if (msg.has_load() && msg.load().has_resource_reservations()
-          && FLAGS_enable_resource_reservation_decay) {
+      if (msg.has_load() && msg.load().has_resource_reservations()) {
         scheduler_->knowledge_base()->UpdateMachineReservations(
             ResourceIDFromString(msg.load().resource_id()),
             msg.load().resource_reservations());
@@ -1334,6 +1337,7 @@ const string Coordinator::SubmitJob(const JobDescriptor& job_descriptor) {
     scheduler_->ScheduleJob(FindOrNull(*job_table_, new_job_id), NULL);
   LOG(INFO) << "Attempted to schedule job " << new_job_id << ", successfully "
             << "scheduled " << num_scheduled << " tasks.";
+
   // Finally, return the new job's ID
   return to_string(new_job_id);
 }

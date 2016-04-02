@@ -269,6 +269,10 @@ void EventDrivenScheduler::ExecuteTask(TaskDescriptor* td_ptr,
   TaskID_t task_id = td_ptr->uid();
   ResourceID_t res_id = ResourceIDFromString(rd_ptr->uuid());
 
+  // Initialize resource reservations
+  ResourceVector* task_reservations =
+      td_ptr->mutable_resource_reservations();
+  task_reservations->CopyFrom(td_ptr->resource_request());
   if (FLAGS_enable_resource_reservation_decay) {
     TaskReservationDecayData base_decay_data;
     CHECK(InsertIfNotPresent(&task_reservation_decay_data_, td_ptr->uid(),
@@ -278,11 +282,6 @@ void EventDrivenScheduler::ExecuteTask(TaskDescriptor* td_ptr,
         td_ptr->uid());
     CHECK_NOTNULL(decay_data);
 
-    // Initialize resource reservations
-    ResourceVector* task_reservations =
-        td_ptr->mutable_resource_reservations();
-    task_reservations->CopyFrom(
-        td_ptr->resource_request());
     if (td_ptr->similar_resource_request_usage_lists_size()
         && (FLAGS_track_same_ec_task_resource_usage
             || FLAGS_track_similar_resource_request_usage)) {
@@ -315,14 +314,13 @@ void EventDrivenScheduler::ExecuteTask(TaskDescriptor* td_ptr,
         }
       }
     }
-
-    VLOG(1) << "Initialized resource reservations for task " << task_id
-            << " to " << ReservationResourceVectorToString(*task_reservations);
-
-    ResourceVector empty_resource_reservations;
-    UpdateMachineReservations(res_id, &empty_resource_reservations,
-                              task_reservations);
   }
+  VLOG(1) << "Initialized resource reservations for task " << task_id
+          << " to " << ReservationResourceVectorToString(*task_reservations);
+  ResourceVector empty_resource_reservations;
+  UpdateMachineReservations(res_id, &empty_resource_reservations,
+                            task_reservations);
+
   // Remove the task from the runnable set
   CHECK_EQ(runnable_tasks_.erase(task_id), 1)
     << "Failed to remove task " << task_id << " from runnable set!";
@@ -1839,16 +1837,14 @@ void EventDrivenScheduler::CalculateExponentialAverageWeights(
 }
 
 void EventDrivenScheduler::ClearTaskResourceReservations(TaskID_t task_id) {
-  if (FLAGS_enable_resource_reservation_decay) {
-    TaskDescriptor* td = FindPtrOrNull(*task_map_, task_id);
-    CHECK_NOTNULL(td);
-    ResourceID_t* res_id_ptr = BoundResourceForTask(task_id);
-    CHECK_NOTNULL(res_id_ptr);
-    ResourceVector empty_resource_reservations;
-    UpdateMachineReservations(*res_id_ptr, &(td->resource_reservations()),
-                              &empty_resource_reservations);
-    td->clear_resource_reservations();
-  }
+  TaskDescriptor* td = FindPtrOrNull(*task_map_, task_id);
+  CHECK_NOTNULL(td);
+  ResourceID_t* res_id_ptr = BoundResourceForTask(task_id);
+  CHECK_NOTNULL(res_id_ptr);
+  ResourceVector empty_resource_reservations;
+  UpdateMachineReservations(*res_id_ptr, &(td->resource_reservations()),
+                            &empty_resource_reservations);
+  td->clear_resource_reservations();
 }
 
 void EventDrivenScheduler::UpdateMachineReservations(
