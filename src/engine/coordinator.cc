@@ -66,6 +66,8 @@ DEFINE_bool(log_child_unused_reserved_resources, false,
             "True if we should output childrens' freed resource information.");
 DEFINE_bool(preempt_by_start_time, true,
             "True if we should sort pre-empted tasks by start time first.");
+DEFINE_bool(reschedule_preempted_tasks, true,
+            "True if we should reschedule tasks that have been pre-empted.");
 
 
 namespace firmament {
@@ -551,12 +553,16 @@ void Coordinator::FreeResources(ResourceVector resources_to_free) {
 
     LOG(INFO) << "Freeing resources by aborting task: "
               << lowest_task_desc->uid();
-    killed_tasks_to_reschedule_->insert(lowest_task_desc);
+    if (FLAGS_reschedule_preempted_tasks) {
+      killed_tasks_to_reschedule_->insert(lowest_task_desc);
 
-    delay_task_state_change_.insert(lowest_task_desc->uid());
+      delay_task_state_change_.insert(lowest_task_desc->uid());
+    }
     scheduler_->KillRunningTask(lowest_task_desc->uid(),
                                 TaskKillMessage::RESOURCE_EXCEEDED);
-    delay_task_state_change_.erase(lowest_task_desc->uid());
+    if (FLAGS_reschedule_preempted_tasks) {
+      delay_task_state_change_.erase(lowest_task_desc->uid());
+    }
 
     machine_running_task_descs.pop();
   }
@@ -1334,6 +1340,7 @@ const string Coordinator::SubmitJob(const JobDescriptor& job_descriptor) {
     scheduler_->ScheduleJob(FindOrNull(*job_table_, new_job_id), NULL);
   LOG(INFO) << "Attempted to schedule job " << new_job_id << ", successfully "
             << "scheduled " << num_scheduled << " tasks.";
+
   // Finally, return the new job's ID
   return to_string(new_job_id);
 }
