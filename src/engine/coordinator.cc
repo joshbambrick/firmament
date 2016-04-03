@@ -899,13 +899,19 @@ void Coordinator::HandleTaskHeartbeat(const TaskHeartbeatMessage& msg) {
 void Coordinator::HandleTaskDelegationRequest(
     const TaskDelegationRequestMessage& msg,
     const string& remote_endpoint) {
+  boost::unique_lock<boost::mutex> delegation_lock(task_delegation_mutex_);
+
   VLOG(1) << "Handling requested delegation of task "
           << msg.task_descriptor().uid() << " from resource "
           << msg.delegating_resource_id();
   // Check if there is room for this task here
   TaskDescriptor* td = new TaskDescriptor(msg.task_descriptor());
-  bool result = scheduler_->PlaceDelegatedTask(
-      td, ResourceIDFromString(msg.target_resource_id()));
+
+  bool result = HaveUnreservedMachineCapacity(td->resource_request());
+  if (result) {
+    result = scheduler_->PlaceDelegatedTask(
+        td, ResourceIDFromString(msg.target_resource_id()));
+  }
   // Return ACK/NACK
   BaseMessage response;
   SUBMSG_WRITE(response, task_delegation_response, task_id, td->uid());
@@ -1344,6 +1350,26 @@ const string Coordinator::SubmitJob(const JobDescriptor& job_descriptor) {
 
 void Coordinator::CreateContainerMonitor() {
   ContainerMonitor::StartContainerMonitor(FLAGS_container_monitor_port);
+}
+
+bool Coordinator::HaveUnreservedMachineCapacity(
+    const ResourceVector& request) {
+  ResourceVector unreserved_resources(machine_capacity_);
+
+  const ResourceVector* machine_reservations =
+      scheduler_->knowledge_base()->GetMachineReservations(machine_uuid_);
+  if (machine_reservations) {
+    unreserved_resources.set_ram_cap(
+        unreserved_resources.ram_cap() - machine_reservations->ram_cap());
+    unreserved_resources.set_disk_bw(
+        unreserved_resources.disk_bw() - machine_reservations->disk_bw());
+    unreserved_resources.set_disk_cap(
+        unreserved_resources.disk_cap() - machine_reservations->disk_cap());
+  }
+
+  return (request.ram_cap() <= unreserved_resources.ram_cap()
+          && request.disk_bw() <= unreserved_resources.disk_bw()
+          && request.disk_cap() <= unreserved_resources.disk_cap());
 }
 
 void Coordinator::Shutdown(const string& reason) {

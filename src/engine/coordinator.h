@@ -223,6 +223,7 @@ class Coordinator : public Node,
 
  protected:
   void CreateContainerMonitor();
+  bool HaveUnreservedMachineCapacity(const ResourceVector& request);
   void AddJobsTasksToTables(TaskDescriptor* td, JobID_t job_id);
   void AddResource(ResourceTopologyNodeDescriptor* rtnd,
                    const string& endpoint_uri,
@@ -310,6 +311,7 @@ class Coordinator : public Node,
   ProcFSMachine machine_monitor_;
   ResourceID_t machine_uuid_;
   ResourceVector machine_capacity_;
+  boost::mutex task_delegation_mutex_;
   // Local machine's host name
   const string hostname_;
   // Consecutive observations of resource reservations exceeding capacity
