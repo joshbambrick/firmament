@@ -60,10 +60,10 @@ DEFINE_uint64(monitor_resource_usage_interval, 10000000,
               "Monitor resources interval in microseconds.");
 DEFINE_bool(populate_knowledge_base_from_file, false,
             "True if we should load the knowledge base from file.");
-DEFINE_bool(determine_unused_reserved_resources, false,
-            "True if we should send freed resource information to parent.");
-DEFINE_bool(log_child_unused_reserved_resources, false,
-            "True if we should output childrens' freed resource information.");
+DEFINE_bool(determine_unused_resources, false,
+            "True if we should send unused resource information to parent.");
+DEFINE_bool(log_child_unused_resources, false,
+            "True if we should output childrens' unused resource information.");
 DEFINE_bool(preempt_by_start_time, true,
             "True if we should sort pre-empted tasks by start time first.");
 DEFINE_bool(reschedule_preempted_tasks, true,
@@ -298,9 +298,10 @@ void Coordinator::Run() {
         stats_resource_reservations->CopyFrom(*machine_reservations);
       }
 
-      if (FLAGS_determine_unused_reserved_resources) {
-        DetermineUnusedReservedResources(
-            stats.mutable_unused_reserved_resources());
+      if (FLAGS_determine_unused_resources) {
+        DetermineUnusedResources(
+            stats.mutable_unused_reserved_resources(),
+            stats.mutable_unused_capacity_resources());
       }
 
       // Record this sample locally
@@ -318,9 +319,14 @@ void Coordinator::Run() {
   Shutdown("dropped out of main loop");
 }
 
-void Coordinator::DetermineUnusedReservedResources(
-    ResourceVector* unused_reserved_resources) {
+void Coordinator::DetermineUnusedResources(
+    ResourceVector* unused_reserved_resources,
+    ResourceVector* unused_capacity_resources) {
   CHECK_NOTNULL(unused_reserved_resources);
+  CHECK_NOTNULL(unused_capacity_resources);
+
+  unused_capacity_resources->CopyFrom(machine_capacity_);
+
   for(auto& task_entry : *task_table_) {
     const TaskPerfStatisticsSample* task_stats =
         scheduler_->knowledge_base()->GetLatestStatsForTask(task_entry.first);
@@ -337,17 +343,41 @@ void Coordinator::DetermineUnusedReservedResources(
           td_ptr->has_resource_reservations()
               ? td_ptr->resource_reservations()
               : td_ptr->resource_request();
+      if (unused_capacity_resources->ram_cap()
+          > task_stats->resources().ram_cap()) {
+        unused_capacity_resources->set_ram_cap(
+            unused_capacity_resources->ram_cap()
+            - task_stats->resources().ram_cap());
+      } else {
+        unused_capacity_resources->set_ram_cap(0);
+      }
       if (reservation.ram_cap() > task_stats->resources().ram_cap()) {
         unused_reserved_resources->set_ram_cap(
           unused_reserved_resources->ram_cap()
           + reservation.ram_cap()
           - task_stats->resources().ram_cap());
       }
+      if (unused_capacity_resources->disk_bw()
+          > task_stats->resources().disk_bw()) {
+        unused_capacity_resources->set_disk_bw(
+            unused_capacity_resources->disk_bw()
+            - task_stats->resources().disk_bw());
+      } else {
+        unused_capacity_resources->set_disk_bw(0);
+      }
       if (reservation.disk_bw() > task_stats->resources().disk_bw()) {
         unused_reserved_resources->set_disk_bw(
           unused_reserved_resources->disk_bw()
           + reservation.disk_bw()
           - task_stats->resources().disk_bw());
+      }
+      if (unused_capacity_resources->disk_cap()
+          > task_stats->resources().disk_cap()) {
+        unused_capacity_resources->set_disk_cap(
+            unused_capacity_resources->disk_cap()
+            - task_stats->resources().disk_cap());
+      } else {
+        unused_capacity_resources->set_disk_cap(0);
       }
       if (reservation.disk_cap() > task_stats->resources().disk_cap()) {
         unused_reserved_resources->set_disk_cap(
@@ -440,8 +470,9 @@ void Coordinator::MonitorResourceUsage() {
       reservation_exceeded_counter_ = 0;
     }
 
-    if (FLAGS_log_child_unused_reserved_resources) {
+    if (FLAGS_log_child_unused_resources) {
       ResourceVector unused_reserved_resources_sum;
+      ResourceVector unused_capacity_resources_sum;
       for (auto& res_item : *associated_resources_) {
         const ResourceDescriptor& res_desc = res_item.second->descriptor();
         MachinePerfStatisticsSample stats;
@@ -463,12 +494,32 @@ void Coordinator::MonitorResourceUsage() {
                 unused_reserved_resources_sum.disk_cap()
                 + stats.unused_reserved_resources().disk_cap());
           }
+          if (stats.has_unused_capacity_resources()) {
+            VLOG(1) << "Unused capacity resources on machine "
+                    << res_desc.uuid() << ": "
+                    << stats.unused_capacity_resources().ram_cap () << " / "
+                    << stats.unused_capacity_resources().disk_bw () << " / "
+                    << stats.unused_capacity_resources().disk_cap ();
+            unused_capacity_resources_sum.set_ram_cap(
+                unused_capacity_resources_sum.ram_cap()
+                + stats.unused_capacity_resources().ram_cap());
+            unused_capacity_resources_sum.set_disk_bw(
+                unused_capacity_resources_sum.disk_bw()
+                + stats.unused_capacity_resources().disk_bw());
+            unused_capacity_resources_sum.set_disk_cap(
+                unused_capacity_resources_sum.disk_cap()
+                + stats.unused_capacity_resources().disk_cap());
+          }
         }
       }
       VLOG(1) << "Child unused reserved resource: "
               << unused_reserved_resources_sum.ram_cap() << " / "
               << unused_reserved_resources_sum.disk_bw() << " / "
               << unused_reserved_resources_sum.disk_cap();
+      VLOG(1) << "Child unused capacity resource: "
+              << unused_capacity_resources_sum.ram_cap() << " / "
+              << unused_capacity_resources_sum.disk_bw() << " / "
+              << unused_capacity_resources_sum.disk_cap();
     }
   }
 }

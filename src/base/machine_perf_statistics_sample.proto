@@ -19,6 +19,7 @@ message MachinePerfStatisticsSample {
   optional uint64 net_bw = 8 [default = 0];
   optional ResourceVector resource_reservations = 9;
   optional ResourceVector unused_reserved_resources = 10;
+  optional ResourceVector unused_capacity_resources = 11;
 }
 
 message CpuUsage {
