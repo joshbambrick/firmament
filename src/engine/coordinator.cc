@@ -943,8 +943,10 @@ void Coordinator::HandleTaskDelegationResponse(
   } else {
     LOG(WARNING) << "Task delegation for " << msg.task_id() << " to "
                  << remote_endpoint << " FAILED. Trying again to schedule.";
-    // Handle the failure by putting the task back into RUNNABLE state
-    scheduler_->HandleTaskDelegationFailure(td);
+    ResourceStatus* rsp = FindPtrOrNull(*associated_resources_,
+        ResourceIDFromString(td->scheduled_to_resource()));
+    scheduler_->HandleTaskEviction(td, rsp->mutable_descriptor());
+    scheduler_->RescheduleTask(td);
   }
 }
 
