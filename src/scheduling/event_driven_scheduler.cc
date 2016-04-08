@@ -100,6 +100,9 @@ DEFINE_double(task_similarity_equiv_class_weight_dropoff, 0.5, "Dropoff "
 DEFINE_double(usage_averaging_coeff, -1, "Coefficient used to exponentially "
               "average new usage measurements, applied to new measurement");
 
+DEFINE_int64(usage_averaging_half_weight_values, -1, "Number of measurements "
+             "that account for half the weight if smoothing.");
+
 DEFINE_int64(task_fail_timeout, 60, "Time (in seconds) after which to declare "
              "a task as failed if it has not sent heartbeats");
 
@@ -1391,17 +1394,23 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                 burstiness_coeffs.disk_bw());
 
             if (min_burstiness_coeff >= 0) {
+              double burstiness_decay_dropoff = FLAGS_burstiness_decay_dropoff;
+              if (burstiness_decay_dropoff < 0.0) {
+                burstiness_decay_dropoff
+                    = -1 * log((2 / (FLAGS_reservation_increment + 1)) - 1);
+              }
+
               // Varies with logistic function.
               reservation_increments.set_ram_cap(
-                  max(ScaleToLogistic(FLAGS_burstiness_decay_dropoff,
+                  max(ScaleToLogistic(burstiness_decay_dropoff,
                                       burstiness_coeffs.ram_cap()),
                       FLAGS_min_reservation_increment));
               reservation_increments.set_disk_bw(
-                  max(ScaleToLogistic(FLAGS_burstiness_decay_dropoff,
+                  max(ScaleToLogistic(burstiness_decay_dropoff,
                                       burstiness_coeffs.disk_bw()),
                       FLAGS_min_reservation_increment));
               reservation_increments.set_disk_cap(
-                  max(ScaleToLogistic(FLAGS_burstiness_decay_dropoff,
+                  max(ScaleToLogistic(burstiness_decay_dropoff,
                                       burstiness_coeffs.disk_cap()),
                       FLAGS_min_reservation_increment));
 
@@ -1722,10 +1731,19 @@ void EventDrivenScheduler::DetermineCurrentTaskUsage(
   measured_usage_double.set_ram_cap(measured_usage.ram_cap());
   measured_usage_double.set_disk_bw(measured_usage.disk_bw());
   measured_usage_double.set_disk_cap(measured_usage.disk_cap());
-  if (FLAGS_usage_averaging_coeff == -1) {
+  if (FLAGS_usage_averaging_coeff == -1
+      && FLAGS_usage_averaging_half_weight_values == -1) {
     current_usage->CopyFrom(measured_usage_double);
   } else {
-    CHECK_GT(FLAGS_usage_averaging_coeff, 0);
+    double averaging_coeff;
+    if (FLAGS_usage_averaging_coeff != -1) {
+      CHECK_GT(FLAGS_usage_averaging_coeff, 0);
+      averaging_coeff = FLAGS_usage_averaging_coeff;
+    } else {
+      CHECK_GT(FLAGS_usage_averaging_half_weight_values, 0);
+      averaging_coeff =
+          1 - pow(0.5, 1.0 / FLAGS_usage_averaging_half_weight_values);
+    }
     vector<ResourceVectorDouble> weights;
     CalculateExponentialAverageWeights(FLAGS_usage_averaging_coeff, &weights);
     DetermineWeightedAverage(
