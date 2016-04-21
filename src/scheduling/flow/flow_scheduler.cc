@@ -240,9 +240,7 @@ void FlowScheduler::HandleTaskFinalReport(const TaskFinalReport& report,
     uint64_t number_of_usage_records = static_cast<uint64_t>(
         usage_list.usage_records_size());
     vector<UsageRecord> copied_usage_records;
-    for (uint64_t i = 0;
-         i < number_of_usage_records;
-         ++i) {
+    for (uint64_t i = 0; i < number_of_usage_records; ++i) {
       const TaskUsageRecord record = usage_list.usage_records(i);
       UsageRecord new_record(record.is_valid(),
                              record.ram_cap(),

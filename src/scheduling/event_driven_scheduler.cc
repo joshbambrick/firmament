@@ -302,7 +302,8 @@ void EventDrivenScheduler::ExecuteTask(TaskDescriptor* td_ptr,
 
       ResourceVector usage_estimate;
       bool usage_estimated = EstimateTaskResourceUsageFromSimilarTasks(
-          td_ptr, 0, ResourceIDFromString(rd_ptr->uuid()),
+          td_ptr, 0,
+          MachineResIDForResource(ResourceIDFromString(rd_ptr->uuid())),
           &usage_estimate);
       if (usage_estimated) {
         CalculateReservationsFromUsage(usage_estimate,
@@ -310,6 +311,7 @@ void EventDrivenScheduler::ExecuteTask(TaskDescriptor* td_ptr,
                                        td_ptr->resource_request(),
                                        FLAGS_reservation_increment,
                                        FLAGS_reservation_safety_margin,
+                                       FLAGS_reservation_overshoot_boost,
                                        task_reservations);
         if (FLAGS_track_similar_task_usage_timeslices) {
           decay_data->last_usage_estimate.CopyFrom(usage_estimate);
@@ -999,15 +1001,13 @@ bool EventDrivenScheduler::UnbindTaskFromResource(TaskDescriptor* td_ptr,
 bool EventDrivenScheduler::EstimateTaskResourceUsageFromSimilarTasks(
     TaskDescriptor* td_ptr,
     uint32_t timeslice_index,
-    ResourceID_t scheduled_resource,
+    ResourceID_t machine_res_id,
     ResourceVector* usage_estimate) {
   vector<ResourceVector> similar_task_vectors;
   vector<double> similar_task_weights;
   bool valid_records_exist = false;
   double base_weight = 1;
   double same_machine_weight = 1;
-
-  ResourceID_t machine_res_id = MachineResIDForResource(scheduled_resource);
 
   uint32_t number_of_usage_lists = static_cast<uint32_t>(
       td_ptr->similar_resource_request_usage_lists_size());
@@ -1138,6 +1138,7 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
       const ResourceVector& limit,
       double reservation_increment,
       double safe_margin,
+      double overshoot_boost,
       ResourceVector* reservations) {
   ResourceVectorDouble reservation_increments;
   reservation_increments.set_ram_cap(reservation_increment);
@@ -1149,6 +1150,7 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
   safety_margins.set_disk_cap(safe_margin);
   CalculateReservationsFromUsage(usage, safe_usage, limit,
                                  reservation_increments, safety_margins,
+                                 overshoot_boost,
                                  reservations);
 }
 
@@ -1158,6 +1160,7 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
       const ResourceVector& limit,
       const ResourceVectorDouble& reservation_increments,
       const ResourceVectorDouble& safe_margins,
+      double overshoot_boost,
       ResourceVector* reservations) {
   if (usage.has_ram_cap()) {
     uint64_t usage_ram = usage.ram_cap();
@@ -1170,7 +1173,7 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
              * safe_usage_ram));
     uint64_t updated_reservation_ram =
         (usage_ram > current_reservation_ram)
-            ? safe_usage_ram * FLAGS_reservation_overshoot_boost
+            ? safe_usage_ram * overshoot_boost
             : current_reservation_ram * reservation_increments.ram_cap();
     updated_reservation_ram = min(max(updated_reservation_ram,
                                       safety_ram),
@@ -1189,7 +1192,7 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
              * safe_usage_disk_bw));
     uint64_t updated_reservation_disk_bw =
         (usage_disk_bw > current_reservation_disk_bw)
-            ? safe_usage_disk_bw * FLAGS_reservation_overshoot_boost
+            ? safe_usage_disk_bw * overshoot_boost
             : current_reservation_disk_bw * reservation_increments.disk_bw();
     updated_reservation_disk_bw = min(max(updated_reservation_disk_bw,
                                           safety_disk_bw),
@@ -1208,7 +1211,7 @@ void EventDrivenScheduler::CalculateReservationsFromUsage(
              * safe_usage_disk_cap));
     uint64_t updated_reservation_disk_cap =
         (usage_disk_cap > current_reservation_disk_cap)
-            ? safe_usage_disk_cap * FLAGS_reservation_overshoot_boost
+            ? safe_usage_disk_cap * overshoot_boost
             : current_reservation_disk_cap * reservation_increments.disk_cap();
     updated_reservation_disk_cap = min(max(updated_reservation_disk_cap,
                                           safety_disk_cap),
@@ -1250,7 +1253,9 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
         VLOG(1) << "Task " << task_id << " resource usage measured "
                 << ReservationResourceVectorToString(measured_usage)
                 << " vs limit " << ReservationResourceVectorToString(limit);
-        if (ResourceExceedsLimit(measured_usage, limit)) {
+        if (ResourceExceedsLimit(
+            measured_usage, limit,
+            FLAGS_enforce_cgroup_limits && FLAGS_trust_cgroup_limits)) {
           ExecutorInterface* exec = FindPtrOrNull(executors_,
                                                   task_scheduled_res_id);
           CHECK_NOTNULL(exec);
@@ -1281,6 +1286,8 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
             DetermineCurrentTaskUsage(
                 measured_usage,
                 decay_data->last_usage_calculated,
+                FLAGS_usage_averaging_coeff,
+                FLAGS_usage_averaging_half_weight_values,
                 &decay_data->last_usage_calculated);
             VLOG(1) << "Task " << task_id << " resource usage determined as "
                     << ReservationResourceVectorToString(
@@ -1347,7 +1354,8 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
 
             decay_data->usage_estimated =
                 EstimateTaskResourceUsageFromSimilarTasks(
-                    td_ptr, timeslice, task_scheduled_res_id,
+                    td_ptr, timeslice,
+                    MachineResIDForResource(task_scheduled_res_id),
                     &decay_data->last_usage_estimate);
 
 
@@ -1385,8 +1393,11 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
           if (FLAGS_burstiness_estimation_window_size > 0) {
             // TODO(Josh): consider just multiplying by the coeff
             ResourceVectorDouble burstiness_coeffs;
-            DetermineTaskBurstinessCoeffs(task_id, full_stats,
-                                          &burstiness_coeffs);
+            DetermineTaskBurstinessCoeffs(
+                decay_data, full_stats,
+                FLAGS_burstiness_estimation_window_size,
+                FLAGS_approximate_burstiness_calculation_min_window_size,
+                &burstiness_coeffs);
 
             double min_burstiness_coeff =
                 min(min(burstiness_coeffs.ram_cap(),
@@ -1469,6 +1480,7 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
                                          limit,
                                          reservation_increments,
                                          safety_margins,
+                                         FLAGS_reservation_overshoot_boost,
                                          reservations);
 
           decay_data->last_combined_usage_estimate.CopyFrom(next_timeslice_usage);
@@ -1488,8 +1500,9 @@ void EventDrivenScheduler::UpdateTaskResourceReservations() {
 
 bool EventDrivenScheduler::ResourceExceedsLimit(
   const ResourceVector& resource,
-  const ResourceVector& limit) {
-  if (FLAGS_enforce_cgroup_limits && FLAGS_trust_cgroup_limits) {
+  const ResourceVector& limit,
+  bool trust_cgroups) {
+  if (trust_cgroups) {
     return resource.disk_cap() > limit.disk_cap();
   } else {
     return resource.ram_cap() > limit.ram_cap()
@@ -1499,11 +1512,12 @@ bool EventDrivenScheduler::ResourceExceedsLimit(
 }
 
 void EventDrivenScheduler::DetermineTaskBurstinessCoeffs(
-    TaskID_t task_id,
+    TaskReservationDecayData* decay_data,
     const deque<TaskPerfStatisticsSample>* stats,
+    int64_t flag_window_size, int64_t flag_min_window_size,
     ResourceVectorDouble* coeffs) {
-  CHECK_GT(FLAGS_burstiness_estimation_window_size, 0);
-  uint64_t window_size = FLAGS_burstiness_estimation_window_size;
+  CHECK_GT(flag_window_size, 0);
+  uint64_t window_size = flag_window_size;
 
   coeffs->set_ram_cap(-1);
   coeffs->set_disk_bw(-1);
@@ -1513,7 +1527,7 @@ void EventDrivenScheduler::DetermineTaskBurstinessCoeffs(
   double fano_disk_bw;
   double fano_disk_cap;
 
-  if (FLAGS_approximate_burstiness_calculation_min_window_size == -1) {
+  if (flag_min_window_size == -1) {
     vector<ResourceVector> usages;
     for (deque<TaskPerfStatisticsSample>::const_reverse_iterator it =
              stats->crbegin();
@@ -1562,15 +1576,9 @@ void EventDrivenScheduler::DetermineTaskBurstinessCoeffs(
   } else {
     if (stats->size() == 0) return;
 
-    CHECK_GT(FLAGS_approximate_burstiness_calculation_min_window_size, 0);
+    CHECK_GT(flag_min_window_size, 0);
     uint64_t max_window_size = window_size;
-    uint64_t min_window_size =
-        FLAGS_approximate_burstiness_calculation_min_window_size;
-
-    TaskReservationDecayData* decay_data = FindOrNull(
-        task_reservation_decay_data_,
-        task_id);
-    CHECK_NOTNULL(decay_data);
+    uint64_t min_window_size = flag_min_window_size;
 
     // Remove expired calculations from the equation
     if (decay_data->usages_included == max_window_size) {
@@ -1726,26 +1734,26 @@ void EventDrivenScheduler::DetermineTaskBurstinessCoeffs(
 void EventDrivenScheduler::DetermineCurrentTaskUsage(
     const ResourceVector& measured_usage,
     const ResourceVectorDouble& prev_usage,
+    double coeff, double half_weight_values,
     ResourceVectorDouble* current_usage) {
   ResourceVectorDouble measured_usage_double;
   measured_usage_double.set_ram_cap(measured_usage.ram_cap());
   measured_usage_double.set_disk_bw(measured_usage.disk_bw());
   measured_usage_double.set_disk_cap(measured_usage.disk_cap());
-  if (FLAGS_usage_averaging_coeff == -1
-      && FLAGS_usage_averaging_half_weight_values == -1) {
+  if (coeff == -1 && half_weight_values == -1) {
     current_usage->CopyFrom(measured_usage_double);
   } else {
     double averaging_coeff;
-    if (FLAGS_usage_averaging_coeff != -1) {
-      CHECK_GT(FLAGS_usage_averaging_coeff, 0);
-      averaging_coeff = FLAGS_usage_averaging_coeff;
+    if (coeff != -1) {
+      CHECK_GT(coeff, 0);
+      averaging_coeff = coeff;
     } else {
-      CHECK_GT(FLAGS_usage_averaging_half_weight_values, 0);
+      CHECK_GT(half_weight_values, 0);
       averaging_coeff =
-          1 - pow(0.5, 1.0 / FLAGS_usage_averaging_half_weight_values);
+          1 - pow(0.5, 1.0 / half_weight_values);
     }
     vector<ResourceVectorDouble> weights;
-    CalculateExponentialAverageWeights(FLAGS_usage_averaging_coeff, &weights);
+    CalculateExponentialAverageWeights(coeff, &weights);
     DetermineWeightedAverage(
         {measured_usage_double, prev_usage},
         weights,

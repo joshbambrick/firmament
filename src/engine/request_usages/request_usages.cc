@@ -118,4 +118,8 @@ ANNpoint RequestUsages::CreateRequestPoint(Request request) {
   return point;
 }
 
+void RequestUsages::UpdateK(uint32_t k) {
+    k_ = k;
+}
+
 } // namespace firmament

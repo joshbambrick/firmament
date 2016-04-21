@@ -9,6 +9,8 @@
 #include <ANN/ANN.h>
 #include <list>
 #include <vector>
+#include <gtest/gtest.h>
+#include <gtest/gtest-spi.h>
 #include "engine/request_usages/usage_record_list.h"
 #include "engine/request_usages/compared_usage_record_list.h"
 #include "engine/request_usages/request.h"
@@ -32,11 +34,13 @@ class RequestUsages {
                     vector<ComparedUsageRecordList>* record_lists);
     void AddToTree(UsageRecordList new_record_list);
 
+    void UpdateK(uint32_t k);
+
   protected:
     void DeleteTree();
     ANNpoint CreateRequestPoint(Request request);
     
-    const uint32_t k_;
+    uint32_t k_;
     const double error_bound_;
     const double rebuild_threshold_;
     const ANNidxArray neighbour_indices_;
